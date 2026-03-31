@@ -72,6 +72,7 @@ async function checkBrowserAvailable(config: HarnessConfig): Promise<void> {
 }
 
 
+function parseArgs(args: string[]): { design?: string; config?: string; help: boolean } {
   const result: { design?: string; config?: string; help: boolean } = { help: false };
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--help" || args[i] === "-h") {

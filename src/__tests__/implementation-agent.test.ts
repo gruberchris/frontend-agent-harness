@@ -16,7 +16,7 @@ mock.module("../llm/copilot-client.ts", () => ({
         return {
           content: null,
           toolCalls: [
-            { id: "w1", name: "write_file", arguments: { path: "index.html", content: "<!DOCTYPE html><html></html>" } },
+            { id: "w1", name: "write_file", arguments: { path: "index.html", content: '<!DOCTYPE html><html lang="en"></html>' } },
           ],
           usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
           finishReason: "tool_calls" as const,

@@ -50,7 +50,7 @@ async function buildFileTree(
   }
 }
 
-async function buildProjectContext(planFile: string, outputDir: string): Promise<string> {
+async function buildProjectContext(planFile: string, outputDir: string, memoryFile: string): Promise<string> {
   const parts: string[] = [];
   const absOutputDir = path.resolve(outputDir);
 
@@ -58,6 +58,12 @@ async function buildProjectContext(planFile: string, outputDir: string): Promise
   const header = await readPlanHeader(planFile);
   if (header) {
     parts.push(`## Project Plan Header (Tech Stack & Conventions)\n${header}`);
+  }
+
+  // 1.5. Evaluator Memory (Lessons Learned)
+  const memory = (await Bun.file(memoryFile).exists()) ? await Bun.file(memoryFile).text() : "";
+  if (memory) {
+    parts.push(`## Evaluator Memory & Previous Corrections\n${memory}`);
   }
 
   // 2. File tree of ./output/ (2 levels deep, max 60 entries, skip node_modules)
@@ -107,6 +113,7 @@ export async function runImplementationCoordinator(
   model: string,
   designContent: string,
   planFile: string,
+  memoryFile: string,
   outputDir: string,
   systemPrompt: string,
   reasoningEffort?: string,
@@ -126,7 +133,7 @@ export async function runImplementationCoordinator(
 
     console.log(chalk.cyan(`\n→ Implementing Task ${nextTask.number}: ${nextTask.title}`));
 
-    const projectContext = await buildProjectContext(planFile, outputDir);
+    const projectContext = await buildProjectContext(planFile, outputDir, memoryFile);
 
     const result = await runImplementationAgent(
       model,

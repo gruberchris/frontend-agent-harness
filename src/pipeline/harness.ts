@@ -65,8 +65,9 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
     // ── Step 2: Implementation Coordinator ──────────────────────────────────
     const coordResult = await runImplementationCoordinator(
       config.agents.implementationAgent.model,
-      await Bun.file(config.designFile).text(), // re-read in case evaluator updated it
+      await Bun.file(config.designFile).text(), // re-read original design (now kept pristine)
       config.planFile,
+      config.memoryFile,
       config.outputDir,
       config.agents.implementationAgent.systemPrompt,
       config.agents.implementationAgent.reasoningEffort,

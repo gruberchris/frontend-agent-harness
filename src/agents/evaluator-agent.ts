@@ -199,18 +199,14 @@ Use the available Playwright tools to navigate to the application, explore its f
 
   await playwright.stop();
 
-  // If NEEDS_WORK, append corrections to memory.md and design.md
+  // If NEEDS_WORK, append corrections to memory.md
   if (decision === "NEEDS_WORK" && corrections) {
     const timestamp = new Date().toISOString();
     const correctionSection = `\n\n---\n\n## Evaluator Findings (${timestamp})\n\n${corrections}\n`;
     
-    // 1. Update memory.md (The persistent "lessons learned")
+    // Update memory.md (The persistent "lessons learned")
     const existingMemory = (await Bun.file(memoryFile).exists()) ? await Bun.file(memoryFile).text() : "";
     await Bun.write(memoryFile, existingMemory + correctionSection);
-
-    // 2. Also update design.md for the implementation agent's context
-    const existingDesign = await Bun.file(designFile).text();
-    await Bun.write(designFile, existingDesign + correctionSection);
   }
 
   return { decision, explanation, usage };

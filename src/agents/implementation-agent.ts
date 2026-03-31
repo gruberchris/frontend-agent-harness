@@ -20,7 +20,7 @@ const IMPL_TOOLS: ToolDefinition[] = [
   },
   {
     name: "write_file",
-    description: "Write content to a file in the output directory (creates parent directories)",
+    description: "Write content to a new file in the output directory (creates parent directories)",
     parameters: {
       type: "object",
       properties: {
@@ -28,6 +28,75 @@ const IMPL_TOOLS: ToolDefinition[] = [
         content: { type: "string", description: "Complete file content" },
       },
       required: ["path", "content"],
+    },
+  },
+  {
+    name: "replace_text",
+    description: "Surgically replace exact text in a file. Use this instead of write_file for modifying existing files to save tokens.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Relative path to the file" },
+        old_string: { type: "string", description: "The exact literal text to replace. Must match exactly." },
+        new_string: { type: "string", description: "The new text to insert." },
+      },
+      required: ["path", "old_string", "new_string"],
+    },
+  },
+  {
+    name: "undo_edit",
+    description: "Reverts a file to its state before the last write_file or replace_text operation.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Relative path to the file" },
+      },
+      required: ["path"],
+    },
+  },
+  {
+    name: "glob",
+    description: "Find files matching a glob pattern (e.g., src/**/*.ts).",
+    parameters: {
+      type: "object",
+      properties: {
+        pattern: { type: "string", description: "Glob pattern to match" },
+      },
+      required: ["pattern"],
+    },
+  },
+  {
+    name: "grep_search",
+    description: "Search for a regex pattern in files.",
+    parameters: {
+      type: "object",
+      properties: {
+        pattern: { type: "string", description: "Regex pattern to search for" },
+        dir: { type: "string", description: "Optional directory to search in, defaults to '.'" },
+      },
+      required: ["pattern"],
+    },
+  },
+  {
+    name: "view_code_symbols",
+    description: "Returns an outline of a file (classes, functions) without full implementation.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Relative path to the file" },
+      },
+      required: ["path"],
+    },
+  },
+  {
+    name: "read_url",
+    description: "Fetch text content from a URL (useful for reading docs).",
+    parameters: {
+      type: "object",
+      properties: {
+        url: { type: "string", description: "URL to fetch" },
+      },
+      required: ["url"],
     },
   },
   {
@@ -169,9 +238,9 @@ export async function runImplementationAgent(
         });
       } else {
         const result = await executeTool(toolCall.name, toolCall.arguments, absOutputDir, planFile, task.number);
-        if (toolCall.name === "write_file" && !result.startsWith("Error")) {
+        if ((toolCall.name === "write_file" || toolCall.name === "replace_text") && !result.startsWith("Error")) {
           filesWritten++;
-          console.log(`    📝 wrote ${toolCall.arguments["path"]}`);
+          console.log(`    📝 updated ${toolCall.arguments["path"]}`);
         } else if (toolCall.name === "run_command") {
           console.log(`    $ ${toolCall.arguments["command"]}`);
         }
@@ -195,6 +264,8 @@ export async function runImplementationAgent(
   return { summary, usage };
 }
 
+const fileBackupCache = new Map<string, string>();
+
 async function executeTool(
   name: string,
   args: Record<string, unknown>,
@@ -211,16 +282,135 @@ async function executeTool(
         const content = await file.text();
         const CAP = 12_000;
         if (content.length > CAP) {
-          return content.slice(0, CAP) + `\n... (truncated, ${content.length - CAP} chars omitted — use write_file to overwrite the full file)`;
+          return content.slice(0, CAP) + `\n... (truncated, ${content.length - CAP} chars omitted — use write_file or replace_text to modify the file)`;
         }
         return content;
       }
 
       case "write_file": {
-        const filePath = path.join(absOutputDir, String(args["path"] ?? ""));
+        const relPath = String(args["path"] ?? "");
+        const filePath = path.join(absOutputDir, relPath);
         await fs.mkdir(path.dirname(filePath), { recursive: true });
+        
+        const file = Bun.file(filePath);
+        if (await file.exists()) {
+          fileBackupCache.set(relPath, await file.text());
+        } else {
+          fileBackupCache.set(relPath, "");
+        }
+        
         await Bun.write(filePath, String(args["content"] ?? ""));
-        return `File written: ${args["path"]}`;
+        
+        if (filePath.endsWith(".ts") || filePath.endsWith(".tsx")) {
+          const proc = Bun.spawn(["bun", "build", filePath, "--no-bundle"], { stdout: "pipe", stderr: "pipe" });
+          const exitCode = await proc.exited;
+          if (exitCode !== 0) {
+            const stderr = await new Response(proc.stderr).text();
+            const backup = fileBackupCache.get(relPath) ?? "";
+            if (backup) {
+              await Bun.write(filePath, backup);
+            } else {
+              await fs.unlink(filePath);
+            }
+            return `Error: Syntax error detected. File write reverted.\n${stderr}`;
+          }
+        }
+        return `File written: ${relPath}`;
+      }
+
+      case "replace_text": {
+        const relPath = String(args["path"] ?? "");
+        const filePath = path.join(absOutputDir, relPath);
+        const oldStr = String(args["old_string"] ?? "");
+        const newStr = String(args["new_string"] ?? "");
+        
+        const file = Bun.file(filePath);
+        if (!(await file.exists())) return `Error: File not found: ${relPath}`;
+        
+        const content = await file.text();
+        if (!content.includes(oldStr)) {
+           return `Error: The exact old_string was not found in the file. Ensure you matched indentation and line breaks perfectly.`;
+        }
+        
+        fileBackupCache.set(relPath, content);
+        const newContent = content.replace(oldStr, newStr);
+        await Bun.write(filePath, newContent);
+        
+        if (filePath.endsWith(".ts") || filePath.endsWith(".tsx")) {
+          const proc = Bun.spawn(["bun", "build", filePath, "--no-bundle"], { stdout: "pipe", stderr: "pipe" });
+          const exitCode = await proc.exited;
+          if (exitCode !== 0) {
+            const stderr = await new Response(proc.stderr).text();
+            await Bun.write(filePath, content);
+            return `Error: Syntax error detected after replacement. File edit reverted.\n${stderr}`;
+          }
+        }
+        return `Text replaced in: ${relPath}`;
+      }
+
+      case "undo_edit": {
+        const relPath = String(args["path"] ?? "");
+        const backup = fileBackupCache.get(relPath);
+        if (backup === undefined) {
+          return `Error: No backup found for ${relPath}`;
+        }
+        const filePath = path.join(absOutputDir, relPath);
+        if (backup === "") {
+          await fs.unlink(filePath).catch(() => {});
+          return `File deleted (reverted to empty state): ${relPath}`;
+        } else {
+          await Bun.write(filePath, backup);
+          return `File reverted to previous state: ${relPath}`;
+        }
+      }
+
+      case "glob": {
+        const pattern = String(args["pattern"] ?? "");
+        const glob = new Bun.Glob(pattern);
+        const results = [];
+        for await (const file of glob.scan({ cwd: absOutputDir })) {
+          results.push(file);
+        }
+        if (results.length === 0) return `No files found matching pattern: ${pattern}`;
+        return results.join("\n");
+      }
+
+      case "grep_search": {
+        const pattern = String(args["pattern"] ?? "");
+        const dir = String(args["dir"] ?? ".");
+        const dirPath = path.join(absOutputDir, dir);
+        const proc = Bun.spawn(["grep", "-rnE", pattern, "."], { cwd: dirPath, stdout: "pipe", stderr: "pipe" });
+        const stdout = await new Response(proc.stdout).text();
+        await proc.exited;
+        if (!stdout) return `No matches found for: ${pattern}`;
+        return stdout.slice(0, 5000) + (stdout.length > 5000 ? "\n... (truncated)" : "");
+      }
+
+      case "view_code_symbols": {
+        const relPath = String(args["path"] ?? "");
+        const filePath = path.join(absOutputDir, relPath);
+        const file = Bun.file(filePath);
+        if (!(await file.exists())) return `Error: File not found: ${relPath}`;
+        const content = await file.text();
+        const lines = content.split("\n");
+        const outline = lines.filter(l => /^(export )?(class|interface|function|const|let|var|type) /.test(l.trim()));
+        if (outline.length === 0) return `No top-level symbols found in ${relPath}`;
+        return outline.map(l => l.trim()).join("\n");
+      }
+
+      case "read_url": {
+        const url = String(args["url"] ?? "");
+        try {
+          const res = await fetch(url);
+          if (!res.ok) return `Error fetching URL: ${res.statusText}`;
+          const text = await res.text();
+          if (text.includes("<html") || text.includes("<!DOCTYPE")) {
+             return text.replace(/<[^>]*>?/gm, " ").replace(/\s\s+/g, " ").slice(0, 10000) + "...\n(Truncated)";
+          }
+          return text.slice(0, 10000) + (text.length > 10000 ? "\n... (truncated)" : "");
+        } catch (e) {
+          return `Error: ${String(e)}`;
+        }
       }
 
       case "list_directory": {

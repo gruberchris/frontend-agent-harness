@@ -1,4 +1,14 @@
-import { describe, test, expect, mock } from "bun:test";
+import { describe, test, expect, mock, afterEach } from "bun:test";
+import * as fs from "node:fs/promises";
+
+const trackedFiles: string[] = [];
+
+afterEach(async () => {
+  for (const f of trackedFiles) {
+    await fs.rm(f, { force: true, recursive: true }).catch(() => {});
+  }
+  trackedFiles.length = 0;
+});
 
 // Full pipeline harness integration tests with all agents mocked
 
@@ -66,7 +76,8 @@ describe("runHarness - success path", () => {
     const tmpDesignFile = `/tmp/harness-design-${Date.now()}.md`;
     const tmpPlanFile = `/tmp/harness-plan-${Date.now()}.md`;
     const tmpOutputDir = `/tmp/harness-output-${Date.now()}`;
-    await Bun.write(tmpDesignFile, "# App\n\nA simple app.");
+    trackedFiles.push(tmpDesignFile, tmpPlanFile, tmpOutputDir);
+    await Bun.write(tmpDesignFile, "# Design doc");
 
     const { runHarness } = await import("../pipeline/harness.ts");
 
@@ -99,7 +110,8 @@ describe("runHarness - max iterations failure", () => {
     const tmpDesignFile = `/tmp/harness-design-${Date.now()}.md`;
     const tmpPlanFile = `/tmp/harness-plan-${Date.now()}.md`;
     const tmpOutputDir = `/tmp/harness-output-${Date.now()}`;
-    await Bun.write(tmpDesignFile, "# App\n\nA simple app.");
+    trackedFiles.push(tmpDesignFile, tmpPlanFile, tmpOutputDir);
+    await Bun.write(tmpDesignFile, "# Design doc");
 
     const { runHarness } = await import("../pipeline/harness.ts");
 

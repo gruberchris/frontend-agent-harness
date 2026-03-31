@@ -1,4 +1,14 @@
-import { describe, test, expect, mock } from "bun:test";
+import { describe, test, expect, mock, afterEach } from "bun:test";
+import * as fs from "node:fs/promises";
+
+const trackedFiles: string[] = [];
+
+afterEach(async () => {
+  for (const f of trackedFiles) {
+    await fs.rm(f, { force: true, recursive: true }).catch(() => {});
+  }
+  trackedFiles.length = 0;
+});
 
 // Mock Playwright MCP server
 mock.module("../mcp/playwright-mcp-server.ts", () => ({
@@ -77,6 +87,8 @@ describe("runEvaluatorAgent - PASS", () => {
     const { runEvaluatorAgent } = await import("../agents/evaluator-agent.ts");
     const tmpDesignFile = `/tmp/eval-design-${Date.now()}.md`;
     const tmpPlanFile = `/tmp/eval-plan-${Date.now()}.md`;
+    const tmpMemoryFile = `/tmp/eval-memory-${Date.now()}.md`;
+    trackedFiles.push(tmpDesignFile, tmpPlanFile, tmpMemoryFile);
     await Bun.write(tmpDesignFile, "# App Design\n\nA simple todo app.");
 
     const result = await runEvaluatorAgent(
@@ -85,6 +97,7 @@ describe("runEvaluatorAgent - PASS", () => {
       "# App Design\n\nA simple todo app.",
       tmpPlanFile,
       tmpDesignFile,
+      tmpMemoryFile,
       "chrome",
       true,
       "You are an expert UX evaluator.",
@@ -100,6 +113,8 @@ describe("runEvaluatorAgent - NEEDS_WORK", () => {
     const { runEvaluatorAgent } = await import("../agents/evaluator-agent.ts");
     const tmpDesignFile = `/tmp/eval-design-${Date.now()}.md`;
     const tmpPlanFile = `/tmp/eval-plan-${Date.now()}.md`;
+    const tmpMemoryFile = `/tmp/eval-memory-${Date.now()}.md`;
+    trackedFiles.push(tmpDesignFile, tmpPlanFile, tmpMemoryFile);
     await Bun.write(tmpDesignFile, "# App Design\n\nA simple todo app.");
 
     const result = await runEvaluatorAgent(
@@ -108,15 +123,21 @@ describe("runEvaluatorAgent - NEEDS_WORK", () => {
       "# App Design\n\nA simple todo app.",
       tmpPlanFile,
       tmpDesignFile,
+      tmpMemoryFile,
       "chrome",
       true,
       "You are an expert UX evaluator.",
     );
     expect(result.explanation).toBe("Header is missing");
 
-    // design.md should have been updated with corrections
+    // design.md should NOT have been updated
     const updatedDesign = await Bun.file(tmpDesignFile).text();
-    expect(updatedDesign).toContain("Add a header component");
-    expect(updatedDesign).toContain("Evaluator Corrections");
+    expect(updatedDesign).not.toContain("Add a header component");
+    expect(updatedDesign).not.toContain("Evaluator Findings");
+
+    // memory.md should have the corrections
+    const updatedMemory = await Bun.file(tmpMemoryFile).text();
+    expect(updatedMemory).toContain("Add a header component");
+    expect(updatedMemory).toContain("Evaluator Findings");
   });
 });

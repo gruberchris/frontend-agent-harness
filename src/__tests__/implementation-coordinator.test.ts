@@ -1,8 +1,17 @@
-import { describe, test, expect, mock, afterAll } from "bun:test";
+import { describe, test, expect, mock, afterAll, afterEach } from "bun:test";
+import * as fs from "node:fs/promises";
 
 // Capture the arguments passed to runImplementationAgent so tests can inspect them
 let capturedContextArg: string | undefined;
 let coordMockCallCount = 0;
+const trackedFiles: string[] = [];
+
+afterEach(async () => {
+  for (const f of trackedFiles) {
+    await fs.rm(f, { force: true, recursive: true }).catch(() => {});
+  }
+  trackedFiles.length = 0;
+});
 
 // Mock CopilotClient so the real implementation agent completes:
 // odd-numbered calls write a file; even-numbered calls mark complete
@@ -76,6 +85,8 @@ describe("runImplementationCoordinator", () => {
     capturedContextArg = undefined;
     const tmpPlanFile = `/tmp/coord-plan-${Date.now()}.md`;
     const tmpOutputDir = `/tmp/coord-output-${Date.now()}`;
+    const tmpMemoryFile = `/tmp/coord-memory-${Date.now()}.md`;
+    trackedFiles.push(tmpPlanFile, tmpOutputDir, tmpMemoryFile);
     await Bun.write(tmpPlanFile, MULTI_TASK_PLAN);
 
     const { runImplementationCoordinator } = await import("../agents/implementation-coordinator.ts");
@@ -83,6 +94,7 @@ describe("runImplementationCoordinator", () => {
       "gpt-4o",
       "# Design",
       tmpPlanFile,
+      tmpMemoryFile,
       tmpOutputDir,
       "You are an implementation coordinator.",
     );
@@ -95,10 +107,12 @@ describe("runImplementationCoordinator", () => {
     capturedContextArg = undefined;
     const tmpPlanFile = `/tmp/coord-plan-ctx-${Date.now()}.md`;
     const tmpOutputDir = `/tmp/coord-output-ctx-${Date.now()}`;
+    const tmpMemoryFile = `/tmp/coord-memory-ctx-${Date.now()}.md`;
+    trackedFiles.push(tmpPlanFile, tmpOutputDir, tmpMemoryFile);
     await Bun.write(tmpPlanFile, MULTI_TASK_PLAN);
 
     const { runImplementationCoordinator } = await import("../agents/implementation-coordinator.ts");
-    await runImplementationCoordinator("gpt-4o", "# Design", tmpPlanFile, tmpOutputDir, "You are a coordinator.");
+    await runImplementationCoordinator("gpt-4o", "# Design", tmpPlanFile, tmpMemoryFile, tmpOutputDir, "You are a coordinator.");
 
     expect(capturedContextArg).toBeDefined();
     expect(capturedContextArg!).toContain("Project Context");
@@ -108,6 +122,8 @@ describe("runImplementationCoordinator", () => {
   test("does not double-count token usage", async () => {
     const tmpPlanFile = `/tmp/coord-plan-tokens-${Date.now()}.md`;
     const tmpOutputDir = `/tmp/coord-output-tokens-${Date.now()}`;
+    const tmpMemoryFile = `/tmp/coord-memory-tokens-${Date.now()}.md`;
+    trackedFiles.push(tmpPlanFile, tmpOutputDir, tmpMemoryFile);
     // single task plan
     const singleTask = MULTI_TASK_PLAN.replace(
       /---\n\n### Task 2[\s\S]*/,
@@ -120,6 +136,7 @@ describe("runImplementationCoordinator", () => {
       "gpt-4o",
       "# Design",
       tmpPlanFile,
+      tmpMemoryFile,
       tmpOutputDir,
       "You are a coordinator.",
     );
@@ -134,6 +151,8 @@ describe("runImplementationCoordinator", () => {
     const allDone = MULTI_TASK_PLAN.replace(/\*\*Status\*\*: pending/g, "**Status**: completed");
     const tmpPlanFile = `/tmp/coord-plan-done-${Date.now()}.md`;
     const tmpOutputDir = `/tmp/coord-output-done-${Date.now()}`;
+    const tmpMemoryFile = `/tmp/coord-memory-done-${Date.now()}.md`;
+    trackedFiles.push(tmpPlanFile, tmpOutputDir, tmpMemoryFile);
     await Bun.write(tmpPlanFile, allDone);
 
     const { runImplementationCoordinator } = await import("../agents/implementation-coordinator.ts");
@@ -141,6 +160,7 @@ describe("runImplementationCoordinator", () => {
       "gpt-4o",
       "# Design",
       tmpPlanFile,
+      tmpMemoryFile,
       tmpOutputDir,
       "You are a coordinator.",
     );

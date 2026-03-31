@@ -1,5 +1,15 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect, afterEach } from "bun:test";
 import { parseTasks, parsePlanHeader } from "../plan/plan-parser.ts";
+import * as fs from "node:fs/promises";
+
+const trackedFiles: string[] = [];
+
+afterEach(async () => {
+  for (const f of trackedFiles) {
+    await fs.rm(f, { force: true, recursive: true }).catch(() => {});
+  }
+  trackedFiles.length = 0;
+});
 
 const PLAN_HEADER = `## Tech Stack
 - **Framework**: React 18 + TypeScript
@@ -88,6 +98,7 @@ describe("parseTasks", () => {
 describe("updateTaskStatus", () => {
   test("updates status in plan file", async () => {
     const tmpFile = `/tmp/plan-test-${Date.now()}.md`;
+    trackedFiles.push(tmpFile);
     await Bun.write(tmpFile, SAMPLE_PLAN);
 
     const { updateTaskStatus } = await import("../plan/plan-parser.ts");
@@ -105,6 +116,7 @@ describe("updateTaskStatus", () => {
 describe("getNextPendingTask", () => {
   test("returns first pending task", async () => {
     const tmpFile = `/tmp/plan-test-${Date.now()}.md`;
+    trackedFiles.push(tmpFile);
     await Bun.write(tmpFile, SAMPLE_PLAN);
 
     const { getNextPendingTask } = await import("../plan/plan-parser.ts");
@@ -157,6 +169,7 @@ describe("parsePlanHeader", () => {
 
   test("reads header from file", async () => {
     const tmpFile = `/tmp/plan-header-${Date.now()}.md`;
+    trackedFiles.push(tmpFile);
     await Bun.write(tmpFile, SAMPLE_PLAN);
 
     const { readPlanHeader } = await import("../plan/plan-parser.ts");

@@ -1,8 +1,16 @@
-import { describe, test, expect, mock } from "bun:test";
-import { mkdir } from "node:fs/promises";
+import { describe, test, expect, mock, afterEach } from "bun:test";
+import * as fs from "node:fs/promises";
 
 let lastChatMessages: Array<{ role: string; content: string }> = [];
 let mockCallCount = 0;
+const trackedFiles: string[] = [];
+
+afterEach(async () => {
+  for (const f of trackedFiles) {
+    await fs.rm(f, { force: true, recursive: true }).catch(() => {});
+  }
+  trackedFiles.length = 0;
+});
 
 // Mock CopilotClient: first call writes a file, second call marks complete
 mock.module("../llm/copilot-client.ts", () => ({
@@ -40,6 +48,7 @@ describe("runImplementationAgent", () => {
     const { runImplementationAgent } = await import("../agents/implementation-agent.ts");
     const tmpPlanFile = `/tmp/impl-agent-plan-${Date.now()}.md`;
     const tmpOutputDir = `/tmp/impl-agent-output-${Date.now()}`;
+    trackedFiles.push(tmpPlanFile, tmpOutputDir);
 
     await Bun.write(
       tmpPlanFile,
@@ -82,6 +91,7 @@ describe("runImplementationAgent", () => {
     const { runImplementationAgent } = await import("../agents/implementation-agent.ts");
     const tmpPlanFile = `/tmp/impl-ctx-plan-${Date.now()}.md`;
     const tmpOutputDir = `/tmp/impl-ctx-output-${Date.now()}`;
+    trackedFiles.push(tmpPlanFile, tmpOutputDir);
 
     await Bun.write(
       tmpPlanFile,
@@ -122,6 +132,7 @@ describe("runImplementationAgent", () => {
     const { runImplementationAgent } = await import("../agents/implementation-agent.ts");
     const tmpPlanFile = `/tmp/impl-sp-plan-${Date.now()}.md`;
     const tmpOutputDir = `/tmp/impl-sp-output-${Date.now()}`;
+    trackedFiles.push(tmpPlanFile, tmpOutputDir);
 
     await Bun.write(
       tmpPlanFile,
@@ -159,7 +170,8 @@ describe("runImplementationAgent", () => {
 describe("file operations in output dir", () => {
   test("writes and reads files correctly", async () => {
     const tmpDir = `/tmp/file-ops-${Date.now()}`;
-    await mkdir(tmpDir, { recursive: true });
+    trackedFiles.push(tmpDir);
+    await fs.mkdir(tmpDir, { recursive: true });
 
     const testFile = `${tmpDir}/test.txt`;
     await Bun.write(testFile, "hello world");

@@ -1,5 +1,15 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect, afterEach } from "bun:test";
 import { loadConfig } from "../config.ts";
+import * as fs from "node:fs/promises";
+
+const trackedFiles: string[] = [];
+
+afterEach(async () => {
+  for (const f of trackedFiles) {
+    await fs.rm(f, { force: true, recursive: true }).catch(() => {});
+  }
+  trackedFiles.length = 0;
+});
 
 describe("loadConfig", () => {
   test("returns defaults when config file does not exist", async () => {
@@ -18,6 +28,7 @@ describe("loadConfig", () => {
 
   test("merges provided config with defaults", async () => {
     const tmpFile = `/tmp/config-test-${Date.now()}.json`;
+    trackedFiles.push(tmpFile);
     await Bun.write(
       tmpFile,
       JSON.stringify({
@@ -38,6 +49,7 @@ describe("loadConfig", () => {
 
   test("throws on invalid config values", async () => {
     const tmpFile = `/tmp/config-test-${Date.now()}.json`;
+    trackedFiles.push(tmpFile);
     await Bun.write(tmpFile, JSON.stringify({ maxEvaluatorIterations: -1 }));
 
     expect(async () => loadConfig(tmpFile)).toThrow();
@@ -45,6 +57,7 @@ describe("loadConfig", () => {
 
   test("accepts valid browser values", async () => {
     const tmpFile = `/tmp/config-test-${Date.now()}.json`;
+    trackedFiles.push(tmpFile);
     for (const browser of ["chrome", "firefox", "webkit", "msedge"]) {
       await Bun.write(tmpFile, JSON.stringify({ playwright: { browser } }));
       const config = await loadConfig(tmpFile);
@@ -64,6 +77,7 @@ describe("loadConfig", () => {
 
   test("merges custom systemPrompt from config file", async () => {
     const tmpFile = `/tmp/config-test-sp-${Date.now()}.json`;
+    trackedFiles.push(tmpFile);
     const customPrompt = "You are a Vue specialist.";
     await Bun.write(
       tmpFile,
@@ -82,6 +96,7 @@ describe("loadConfig", () => {
 
   test("accepts reasoningEffort for an agent", async () => {
     const tmpFile = `/tmp/config-test-re-${Date.now()}.json`;
+    trackedFiles.push(tmpFile);
     await Bun.write(
       tmpFile,
       JSON.stringify({
@@ -104,6 +119,7 @@ describe("loadConfig", () => {
 
   test("rejects invalid reasoningEffort values", async () => {
     const tmpFile = `/tmp/config-test-re-bad-${Date.now()}.json`;
+    trackedFiles.push(tmpFile);
     await Bun.write(
       tmpFile,
       JSON.stringify({

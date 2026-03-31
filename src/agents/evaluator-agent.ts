@@ -185,6 +185,17 @@ Use the available Playwright tools to navigate to the application, explore its f
 
     // 3. After all tool messages, push any collected images in a user message
     if (collectedImages.length > 0) {
+      // Prune old images to save context
+      for (const msg of messages) {
+        if (Array.isArray(msg.content)) {
+          for (let j = 0; j < msg.content.length; j++) {
+            if (msg.content[j]!.type === "image") {
+              msg.content[j] = { type: "text", text: "[Previous screenshot omitted for context efficiency]" };
+            }
+          }
+        }
+      }
+
       messages.push({
         role: "user",
         content: [

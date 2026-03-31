@@ -70,35 +70,6 @@ async function buildProjectContext(planFile: string, outputDir: string, memoryFi
   const tree = await buildFileTree(absOutputDir, 2);
   parts.push(`## Current Output Directory Structure\n${tree || "(empty — no files yet)"}`);
 
-  // 3. Contents of key project files that already exist (capped per-file)
-  const keyFiles = [
-    "package.json",
-    "tsconfig.json",
-    "tsconfig.node.json",
-    "vite.config.ts",
-    "vite.config.js",
-    "index.html",
-    "src/main.tsx",
-    "src/main.ts",
-    "src/index.tsx",
-    "src/index.ts",
-    "src/App.tsx",
-    "src/App.ts",
-  ];
-
-  const FILE_CAP = 4_000; // chars per file
-  for (const relPath of keyFiles) {
-    const absPath = path.join(absOutputDir, relPath);
-    const file = Bun.file(absPath);
-    if (await file.exists()) {
-      let content = await file.text();
-      if (content.length > FILE_CAP) {
-        content = content.slice(0, FILE_CAP) + `\n... (truncated, ${content.length - FILE_CAP} chars omitted)`;
-      }
-      parts.push(`## ${relPath}\n\`\`\`\n${content}\n\`\`\``);
-    }
-  }
-
   const context = parts.join("\n\n");
 
   // Hard cap on total context size sent per task (~30KB)

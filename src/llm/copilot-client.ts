@@ -47,7 +47,7 @@ export class CopilotClient {
   ): Promise<LLMResponse> {
     if (!this.client) await this.init();
     const openaiMessages = messages.map((m) => {
-      let content: string | any[] = "";
+      let content: string | any[];
       if (Array.isArray(m.content)) {
         content = m.content.map((part) => {
           if (part.type === "text") {

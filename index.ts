@@ -1,6 +1,7 @@
 import { runHarness } from "./src/pipeline/harness.ts";
-import { loadConfig } from "./src/config.ts";
+import { loadConfig, type HarnessConfig } from "./src/config.ts";
 import chalk from "chalk";
+import { existsSync } from "node:fs";
 
 const HELP = `
 ${chalk.bold("Frontend Design Agent Harness")}
@@ -21,7 +22,56 @@ Example:
   bun run index.ts --design ./my-app-design.md --config ./config.json
 `;
 
-function parseArgs(args: string[]): { design?: string; config?: string; help: boolean } {
+/** Paths to check per browser on macOS and Linux/Windows */
+const BROWSER_PATHS: Record<string, string[]> = {
+  chrome: [
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+  ],
+  firefox: [
+    "/Applications/Firefox.app/Contents/MacOS/firefox",
+    "/usr/bin/firefox",
+    "C:\\Program Files\\Mozilla Firefox\\firefox.exe",
+  ],
+  msedge: [
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    "/usr/bin/microsoft-edge",
+    "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+  ],
+  // webkit is bundled by playwright-mcp; no system binary to check
+};
+
+async function checkBrowserAvailable(config: HarnessConfig): Promise<void> {
+  const { browser } = config.playwright;
+  const paths = BROWSER_PATHS[browser];
+
+  if (!paths) return; // webkit — rely on playwright-mcp's bundled binary
+
+  const found = paths.some((p) => existsSync(p));
+  if (found) return;
+
+  // Final fallback: try `which`
+  const cmd = browser === "chrome" ? "google-chrome" : browser === "msedge" ? "microsoft-edge" : browser;
+  const whichFound = await Bun.$`which ${cmd}`.quiet().then(() => true).catch(() => false);
+  if (whichFound) return;
+
+  console.error(chalk.red(`\nError: Browser '${browser}' is not installed or could not be found.`));
+  console.error("The evaluator agent requires the browser to be installed before the pipeline starts.");
+  if (browser === "chrome") {
+    console.error("  → Download Google Chrome: https://www.google.com/chrome/");
+    console.error("  → Or switch to a different browser in config.json: firefox, webkit, msedge");
+  } else if (browser === "firefox") {
+    console.error("  → Download Firefox: https://www.mozilla.org/firefox/");
+  } else if (browser === "msedge") {
+    console.error("  → Download Microsoft Edge: https://www.microsoft.com/edge/");
+  }
+  process.exit(1);
+}
+
+
   const result: { design?: string; config?: string; help: boolean } = { help: false };
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--help" || args[i] === "-h") {
@@ -62,6 +112,9 @@ async function main() {
 
   // CLI flags override config file
   if (args.design) config.designFile = args.design;
+
+  // Pre-flight: verify the browser is installed before spending tokens
+  await checkBrowserAvailable(config);
 
   try {
     const report = await runHarness(config);

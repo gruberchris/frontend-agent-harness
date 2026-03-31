@@ -85,7 +85,7 @@ describe("runEvaluatorAgent - PASS", () => {
       "# App Design\n\nA simple todo app.",
       tmpPlanFile,
       tmpDesignFile,
-      "chromium",
+      "chrome",
       true,
       "You are an expert UX evaluator.",
     );
@@ -108,7 +108,7 @@ describe("runEvaluatorAgent - NEEDS_WORK", () => {
       "# App Design\n\nA simple todo app.",
       tmpPlanFile,
       tmpDesignFile,
-      "chromium",
+      "chrome",
       true,
       "You are an expert UX evaluator.",
     );

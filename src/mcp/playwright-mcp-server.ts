@@ -4,7 +4,7 @@ export class PlaywrightMcpServer {
   private client: McpClient | null = null;
 
   constructor(
-    private readonly browser: string = "chromium",
+    private readonly browser: string = "chrome",
     private readonly headless: boolean = true,
   ) {}
 

@@ -9,7 +9,7 @@ describe("loadConfig", () => {
     expect(config.designFile).toBe("./design.md");
     expect(config.planFile).toBe("./plan.md");
     expect(config.devServer.port).toBe(3000);
-    expect(config.playwright.browser).toBe("chromium");
+    expect(config.playwright.browser).toBe("chrome");
     expect(config.playwright.headless).toBe(true);
     expect(config.agents.taskAgent.model).toBe("gpt-4o");
     expect(config.agents.implementationAgent.model).toBe("gpt-4o");
@@ -45,10 +45,10 @@ describe("loadConfig", () => {
 
   test("accepts valid browser values", async () => {
     const tmpFile = `/tmp/config-test-${Date.now()}.json`;
-    for (const browser of ["chromium", "firefox", "webkit"]) {
+    for (const browser of ["chrome", "firefox", "webkit", "msedge"]) {
       await Bun.write(tmpFile, JSON.stringify({ playwright: { browser } }));
       const config = await loadConfig(tmpFile);
-      expect(config.playwright.browser).toBe(browser as "chromium" | "firefox" | "webkit");
+      expect(config.playwright.browser).toBe(browser as "chrome" | "firefox" | "webkit" | "msedge");
     }
   });
 

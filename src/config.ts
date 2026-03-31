@@ -21,7 +21,7 @@ export const HarnessConfigSchema = z.object({
   }),
   playwright: z.object({
     headless: z.boolean(),
-    browser: z.enum(["chromium", "firefox", "webkit"]),
+    browser: z.enum(["chrome", "firefox", "webkit", "msedge"]),
   }),
   agents: z.object({
     taskAgent: AgentConfigSchema,
@@ -40,7 +40,7 @@ const DEFAULTS: HarnessConfig = {
   designFile: "./design.md",
   planFile: "./plan.md",
   devServer: { port: 3000, startCommand: "bun run dev" },
-  playwright: { headless: true, browser: "chromium" },
+  playwright: { headless: true, browser: "chrome" },
   agents: {
     taskAgent: {
       model: "gpt-4o",

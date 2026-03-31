@@ -9,7 +9,7 @@
   },
   "playwright": {
     "headless": true,
-    "browser": "chromium"
+    "browser": "chrome"
   },
   "agents": {
     "taskAgent": {

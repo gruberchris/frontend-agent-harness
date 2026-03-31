@@ -76,7 +76,7 @@ describe("runHarness - success path", () => {
       designFile: tmpDesignFile,
       planFile: tmpPlanFile,
       devServer: { port: 3000, startCommand: "bun run dev" },
-      playwright: { headless: true, browser: "chromium" },
+      playwright: { headless: true, browser: "chrome" },
       agents: {
         taskAgent: { model: "gpt-4o", systemPrompt: "You are an architect." },
         implementationCoordinator: { model: "gpt-4.1", systemPrompt: "You are a coordinator." },
@@ -109,7 +109,7 @@ describe("runHarness - max iterations failure", () => {
       designFile: tmpDesignFile,
       planFile: tmpPlanFile,
       devServer: { port: 3001, startCommand: "bun run dev" },
-      playwright: { headless: true, browser: "chromium" },
+      playwright: { headless: true, browser: "chrome" },
       agents: {
         taskAgent: { model: "gpt-4o", systemPrompt: "You are an architect." },
         implementationCoordinator: { model: "gpt-4.1", systemPrompt: "You are a coordinator." },
@@ -134,7 +134,7 @@ describe("runHarness - missing design file", () => {
         designFile: "/tmp/nonexistent-design-xyz.md",
         planFile: "/tmp/plan.md",
         devServer: { port: 3000, startCommand: "bun run dev" },
-        playwright: { headless: true, browser: "chromium" },
+        playwright: { headless: true, browser: "chrome" },
         agents: {
           taskAgent: { model: "gpt-4o", systemPrompt: "You are an architect." },
           implementationCoordinator: { model: "gpt-4.1", systemPrompt: "You are a coordinator." },

@@ -7,6 +7,28 @@ import { addTokenUsage, emptyTokenUsage } from "../llm/types.ts";
 import type { HarnessConfig } from "../config.ts";
 import chalk from "chalk";
 
+const activeHandles: Set<{ stop: () => Promise<void> }> = new Set();
+
+async function cleanup() {
+  for (const handle of activeHandles) {
+    try {
+      await handle.stop();
+    } catch {}
+  }
+}
+
+process.on("SIGINT", async () => {
+  console.log("\nCaught interrupt signal. Cleaning up processes...");
+  await cleanup();
+  process.exit(1);
+});
+
+process.on("unhandledRejection", async (err) => {
+  console.error("Unhandled Rejection:", err);
+  await cleanup();
+  process.exit(1);
+});
+
 export async function runHarness(config: HarnessConfig): Promise<PipelineReport> {
   const startTime = Date.now();
   const steps: AgentStepStats[] = [];
@@ -83,6 +105,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
 
     // ── Start/restart dev server ────────────────────────────────────────────
     if (devServerHandle) {
+      activeHandles.delete(devServerHandle);
       await devServerHandle.stop();
     }
     console.log(chalk.bold(`\n🌐 Starting dev server at ${appUrl}...`));
@@ -92,6 +115,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
         config.devServer.startCommand,
         config.devServer.port,
       );
+      activeHandles.add(devServerHandle);
       console.log(chalk.green(`✓ Dev server running at ${appUrl}`));
     } catch (err) {
       console.warn(chalk.yellow(`⚠ Could not start dev server: ${err}`));
@@ -152,6 +176,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
 
   // ── Cleanup ──────────────────────────────────────────────────────────────────
   if (devServerHandle) {
+    activeHandles.delete(devServerHandle);
     await devServerHandle.stop();
   }
 

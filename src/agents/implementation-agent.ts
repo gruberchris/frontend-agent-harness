@@ -179,8 +179,12 @@ export async function runImplementationAgent(
   // Mark task as in_progress
   await updateTaskStatus(planFile, task.number, "in_progress");
 
-  let summary = "";
+  let summary: string;
   let filesWritten = 0;
+  
+  // Loop detection
+  let lastToolCallSignature = "";
+  let consecutiveIdenticalCalls = 0;
 
   // Tool-calling loop
   for (let i = 0; i < maxToolCallIterations; i++) {
@@ -212,43 +216,68 @@ export async function runImplementationAgent(
 
     // Execute ALL tool calls in this batch before checking for completion
     let completionCall: { id: string; summary: string } | null = null;
+    let interceptedLoop = false;
 
-    for (const toolCall of response.toolCalls) {
-      if (toolCall.name === "mark_task_complete") {
-        // Guard: refuse completion if no files have been written yet
-        if (filesWritten === 0) {
+    // Loop detection check
+    const currentSignature = JSON.stringify(response.toolCalls);
+    if (currentSignature === lastToolCallSignature) {
+      consecutiveIdenticalCalls++;
+    } else {
+      consecutiveIdenticalCalls = 0;
+      lastToolCallSignature = currentSignature;
+    }
+
+    if (consecutiveIdenticalCalls >= 3) {
+      // Intercept the call
+      for (const toolCall of response.toolCalls) {
+        messages.push({
+          role: "tool",
+          content: "Error: You are caught in a loop making the exact same tool calls. You must try a different approach or mark the task as complete/failed.",
+          toolCallId: toolCall.id,
+        });
+      }
+      interceptedLoop = true;
+      console.log(`    ⚠  Intercepted tool call loop`);
+    }
+
+    if (!interceptedLoop) {
+      for (const toolCall of response.toolCalls) {
+        if (toolCall.name === "mark_task_complete") {
+          // Guard: refuse completion if no files have been written yet
+          if (filesWritten === 0) {
+            messages.push({
+              role: "tool",
+              content: "Error: Cannot mark task complete — no files have been written yet. You must call write_file to create or update files before marking the task complete.",
+              toolCallId: toolCall.id,
+            });
+            console.log(`    ⚠  Refused early mark_task_complete (no files written yet)`);
+            continue;
+          }
+          completionCall = {
+            id: toolCall.id,
+            summary: (toolCall.arguments["summary"] as string) ?? "Task completed",
+          };
+          // Execute the underlying status update
+          await executeTool(toolCall.name, toolCall.arguments, absOutputDir, planFile, task.number);
           messages.push({
             role: "tool",
-            content: "Error: Cannot mark task complete — no files have been written yet. You must call write_file to create or update files before marking the task complete.",
+            content: "Task marked as completed.",
             toolCallId: toolCall.id,
           });
-          console.log(`    ⚠  Refused early mark_task_complete (no files written yet)`);
-          continue;
+        } else {
+          const result = await executeTool(toolCall.name, toolCall.arguments, absOutputDir, planFile, task.number);
+          if ((toolCall.name === "write_file" || toolCall.name === "replace_text") && !result.startsWith("Error")) {
+            filesWritten++;
+            console.log(`    📝 updated ${toolCall.arguments["path"]}`);
+          } else if (toolCall.name === "run_command") {
+            console.log(`    $ ${toolCall.arguments["command"]}`);
+          }
+          messages.push({
+            role: "tool",
+            content: result,
+            toolCallId: toolCall.id,
+          });
         }
-        completionCall = {
-          id: toolCall.id,
-          summary: (toolCall.arguments["summary"] as string) ?? "Task completed",
-        };
-        // Execute the underlying status update
-        await executeTool(toolCall.name, toolCall.arguments, absOutputDir, planFile, task.number);
-        messages.push({
-          role: "tool",
-          content: "Task marked as completed.",
-          toolCallId: toolCall.id,
-        });
-      } else {
-        const result = await executeTool(toolCall.name, toolCall.arguments, absOutputDir, planFile, task.number);
-        if ((toolCall.name === "write_file" || toolCall.name === "replace_text") && !result.startsWith("Error")) {
-          filesWritten++;
-          console.log(`    📝 updated ${toolCall.arguments["path"]}`);
-        } else if (toolCall.name === "run_command") {
-          console.log(`    $ ${toolCall.arguments["command"]}`);
-        }
-        messages.push({
-          role: "tool",
-          content: result,
-          toolCallId: toolCall.id,
-        });
       }
     }
 
@@ -259,8 +288,8 @@ export async function runImplementationAgent(
     }
   }
 
-  // If loop ended without mark_task_complete, still mark it done
-  await updateTaskStatus(planFile, task.number, "completed");
+  // If loop ended without mark_task_complete
+  summary = "Implementation failed: Loop limit reached before completion.";
   return { summary, usage };
 }
 

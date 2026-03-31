@@ -88,16 +88,36 @@ export async function updateTaskStatus(
   newStatus: TaskStatus,
 ): Promise<void> {
   const file = Bun.file(planFile);
-  let content = await file.text();
+  const content = await file.text();
+  const lines = content.split("\n");
 
-  // Find and replace the status line within the specific task block
-  const taskHeaderPattern = new RegExp(
-    `(###\\s+Task\\s+${taskNumber}:[\\s\\S]*?)\\*\\*Status\\*\\*:\\s*(pending|in_progress|completed)`,
-    "m",
-  );
-  content = content.replace(taskHeaderPattern, `$1**Status**: ${newStatus}`);
+  let inTargetTask = false;
+  let updated = false;
 
-  await Bun.write(planFile, content);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // Check if we reached the target task header
+    const taskHeaderMatch = line!.match(/^###\s+Task\s+(\d+):/);
+    if (taskHeaderMatch) {
+      const currentTaskNumber = parseInt(taskHeaderMatch[1]!, 10);
+      inTargetTask = currentTaskNumber === taskNumber;
+      continue;
+    }
+
+    // If we are in the target task, look for the Status line
+    if (inTargetTask && line!.match(/^\*\*Status\*\*:/)) {
+      lines[i] = `**Status**: ${newStatus}`;
+      updated = true;
+      break; // Done updating
+    }
+  }
+
+  if (!updated) {
+    throw new Error(`Failed to update status for Task ${taskNumber}. Task or Status line not found.`);
+  }
+
+  await Bun.write(planFile, lines.join("\n"));
 }
 
 export async function appendTasks(planFile: string, tasksMarkdown: string): Promise<void> {

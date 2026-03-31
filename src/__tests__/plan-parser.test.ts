@@ -111,6 +111,15 @@ describe("updateTaskStatus", () => {
     expect(tasks[1]!.status).toBe("completed");
     expect(tasks[2]!.status).toBe("in_progress");
   });
+
+  test("throws error if task cannot be found", async () => {
+    const tmpFile = `/tmp/plan-test-not-found-${Date.now()}.md`;
+    trackedFiles.push(tmpFile);
+    await Bun.write(tmpFile, SAMPLE_PLAN);
+
+    const { updateTaskStatus } = await import("../plan/plan-parser.ts");
+    expect(updateTaskStatus(tmpFile, 99, "completed")).rejects.toThrow(/Task or Status line not found/);
+  });
 });
 
 describe("getNextPendingTask", () => {

@@ -47,17 +47,35 @@ export class CopilotClient {
   ): Promise<LLMResponse> {
     if (!this.client) await this.init();
     const openaiMessages = messages.map((m) => {
+      let content: string | any[] = "";
+      if (Array.isArray(m.content)) {
+        content = m.content.map((part) => {
+          if (part.type === "text") {
+            return { type: "text", text: part.text };
+          } else {
+            return {
+              type: "image_url",
+              image_url: {
+                url: `data:${part.mimeType};base64,${part.data}`,
+              },
+            };
+          }
+        });
+      } else {
+        content = m.content ?? "";
+      }
+
       if (m.role === "tool") {
         return {
           role: "tool" as const,
-          content: m.content ?? "",
+          content: typeof content === "string" ? content : JSON.stringify(content),
           tool_call_id: m.toolCallId ?? "",
         };
       }
       if (m.role === "assistant" && m.toolCalls && m.toolCalls.length > 0) {
         return {
           role: "assistant" as const,
-          content: m.content,
+          content: typeof content === "string" ? content : null,
           tool_calls: m.toolCalls.map((tc) => ({
             id: tc.id,
             type: "function" as const,
@@ -70,7 +88,7 @@ export class CopilotClient {
       }
       return {
         role: m.role as "system" | "user" | "assistant",
-        content: m.content ?? "",
+        content: content as any,
       };
     });
 

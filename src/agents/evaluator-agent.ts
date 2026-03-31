@@ -1,5 +1,5 @@
 import { CopilotClient } from "../llm/copilot-client.ts";
-import { addTokenUsage, emptyTokenUsage, type TokenUsage } from "../llm/types.ts";
+import { addTokenUsage, emptyTokenUsage, type TokenUsage, type MessageContentPart } from "../llm/types.ts";
 import type { LLMMessage, ToolDefinition } from "../llm/types.ts";
 import { PlaywrightMcpServer } from "../mcp/playwright-mcp-server.ts";
 import type { McpTool } from "../mcp/mcp-client.ts";
@@ -61,6 +61,7 @@ export async function runEvaluatorAgent(
   designContent: string,
   planFile: string,
   designFile: string,
+  memoryFile: string,
   playwrightBrowser: string,
   playwrightHeadless: boolean,
   systemPrompt: string,
@@ -123,6 +124,8 @@ Use the available Playwright tools to navigate to the application, explore its f
     }
 
     let decided = false;
+    const collectedImages: MessageContentPart[] = [];
+
     for (const toolCall of response.toolCalls) {
       if (toolCall.name === "decide_pass") {
         decision = "PASS";
@@ -146,21 +149,49 @@ Use the available Playwright tools to navigate to the application, explore its f
       } else {
         // Execute Playwright MCP tool
         console.log(`    🌐 ${toolCall.name}(${JSON.stringify(toolCall.arguments).slice(0, 80)})`);
-        let toolResult: string;
         try {
           const result = await playwright.callTool(toolCall.name, toolCall.arguments);
-          toolResult = result.content
-            .map((c) => (c.type === "text" ? c.text : `[image: ${c.mimeType}]`))
-            .join("\n");
+          const textParts = result.content
+            .filter((c) => c.type === "text")
+            .map((c) => (c as { text: string }).text);
+          const imageParts = result.content
+            .filter((c) => c.type === "image")
+            .map((c) => ({
+              type: "image" as const,
+              data: (c as { data: string }).data,
+              mimeType: (c as { mimeType: string }).mimeType,
+            }));
+
+          // 1. Push the tool response (OpenAI requires a tool message for every tool call)
+          messages.push({
+            role: "tool",
+            content: textParts.join("\n") || "Action completed",
+            toolCallId: toolCall.id,
+          });
+
+          // 2. Collect images for a final user message
+          if (imageParts.length > 0) {
+            collectedImages.push(...imageParts);
+          }
         } catch (err) {
-          toolResult = `Error: ${String(err)}`;
+          messages.push({
+            role: "tool",
+            content: `Error: ${String(err)}`,
+            toolCallId: toolCall.id,
+          });
         }
-        messages.push({
-          role: "tool",
-          content: toolResult,
-          toolCallId: toolCall.id,
-        });
       }
+    }
+
+    // 3. After all tool messages, push any collected images in a user message
+    if (collectedImages.length > 0) {
+      messages.push({
+        role: "user",
+        content: [
+          { type: "text", text: "Screenshots from previous actions:" },
+          ...collectedImages,
+        ],
+      });
     }
 
     if (decided) break;
@@ -168,10 +199,17 @@ Use the available Playwright tools to navigate to the application, explore its f
 
   await playwright.stop();
 
-  // If NEEDS_WORK, append corrections to design.md
+  // If NEEDS_WORK, append corrections to memory.md and design.md
   if (decision === "NEEDS_WORK" && corrections) {
+    const timestamp = new Date().toISOString();
+    const correctionSection = `\n\n---\n\n## Evaluator Findings (${timestamp})\n\n${corrections}\n`;
+    
+    // 1. Update memory.md (The persistent "lessons learned")
+    const existingMemory = (await Bun.file(memoryFile).exists()) ? await Bun.file(memoryFile).text() : "";
+    await Bun.write(memoryFile, existingMemory + correctionSection);
+
+    // 2. Also update design.md for the implementation agent's context
     const existingDesign = await Bun.file(designFile).text();
-    const correctionSection = `\n\n---\n\n## Evaluator Corrections (iteration ${Date.now()})\n\n${corrections}\n`;
     await Bun.write(designFile, existingDesign + correctionSection);
   }
 

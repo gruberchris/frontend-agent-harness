@@ -16,9 +16,13 @@ export interface ToolCall {
   arguments: Record<string, unknown>;
 }
 
+export type MessageContentPart =
+  | { type: "text"; text: string }
+  | { type: "image"; data: string; mimeType: string };
+
 export interface LLMMessage {
   role: "system" | "user" | "assistant" | "tool";
-  content: string | null;
+  content: string | MessageContentPart[] | null;
   toolCallId?: string;
   toolCalls?: ToolCall[];
 }

@@ -15,6 +15,7 @@ export const HarnessConfigSchema = z.object({
   outputDir: z.string(),
   designFile: z.string(),
   planFile: z.string(),
+  memoryFile: z.string(),
   devServer: z.object({
     port: z.number().int().min(1).max(65535),
     startCommand: z.string(),
@@ -39,6 +40,7 @@ const DEFAULTS: HarnessConfig = {
   outputDir: "./output",
   designFile: "./design.md",
   planFile: "./plan.md",
+  memoryFile: "./memory.md",
   devServer: { port: 3000, startCommand: "bun run dev" },
   playwright: { headless: true, browser: "chrome" },
   agents: {
@@ -163,6 +165,7 @@ export async function loadConfig(configPath: string): Promise<HarnessConfig> {
     ...(raw["outputDir"] !== undefined && { outputDir: raw["outputDir"] as string }),
     ...(raw["designFile"] !== undefined && { designFile: raw["designFile"] as string }),
     ...(raw["planFile"] !== undefined && { planFile: raw["planFile"] as string }),
+    ...(raw["memoryFile"] !== undefined && { memoryFile: raw["memoryFile"] as string }),
     devServer: { ...DEFAULTS.devServer, ...((raw["devServer"] as RawConfig) ?? {}) },
     playwright: { ...DEFAULTS.playwright, ...((raw["playwright"] as RawConfig) ?? {}) } as HarnessConfig["playwright"],
     agents: {

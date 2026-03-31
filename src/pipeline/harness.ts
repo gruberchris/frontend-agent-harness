@@ -23,6 +23,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
   console.log(chalk.bold(`\n🚀 Frontend Design Agent Harness`));
   console.log(chalk.dim(`Design: ${config.designFile}`));
   console.log(chalk.dim(`Plan:   ${config.planFile}`));
+  console.log(chalk.dim(`Memory: ${config.memoryFile}`));
   console.log(chalk.dim(`Output: ${config.outputDir}`));
   console.log(chalk.dim(`Max iterations: ${config.maxEvaluatorIterations}\n`));
 
@@ -37,6 +38,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
     config.agents.taskAgent.model,
     designContent,
     config.planFile,
+    config.memoryFile,
     config.agents.taskAgent.systemPrompt,
     config.agents.taskAgent.reasoningEffort,
     config.agents.taskAgent.maxTokens,
@@ -104,6 +106,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
       currentDesign,
       config.planFile,
       config.designFile,
+      config.memoryFile,
       config.playwright.browser,
       config.playwright.headless,
       config.agents.evaluatorAgent.systemPrompt,
@@ -136,6 +139,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
       config.agents.taskAgent.model,
       updatedDesign,
       config.planFile,
+      config.memoryFile,
       config.agents.taskAgent.systemPrompt,
       config.agents.taskAgent.reasoningEffort,
       config.agents.taskAgent.maxTokens,

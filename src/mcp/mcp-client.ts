@@ -49,7 +49,15 @@ export class McpClient {
       clientInfo: { name: "frontend-agent-harness", version: "1.0.0" },
     });
 
-    await this.send("notifications/initialized", null);
+    // Send initialized notification (fire-and-forget — no response expected)
+    this.notify("notifications/initialized", {});
+  }
+
+  /** Send a JSON-RPC notification (no id, no response). */
+  private notify(method: string, params: unknown): void {
+    const message = JSON.stringify({ jsonrpc: "2.0", method, params }) + "\n";
+    const stdin = this.subprocess!.stdin as import("bun").FileSink;
+    stdin.write(new TextEncoder().encode(message));
   }
 
   private readLoop(): void {
@@ -90,7 +98,7 @@ export class McpClient {
     }
   }
 
-  private send(method: string, params: unknown): Promise<unknown> {
+  private send(method: string, params: unknown, timeoutMs = 30_000): Promise<unknown> {
     return new Promise((resolve, reject) => {
       const id = this.nextId++;
       this.pendingRequests.set(id, { resolve, reject });
@@ -98,6 +106,21 @@ export class McpClient {
       const line = JSON.stringify(request) + "\n";
       const stdin = this.subprocess!.stdin as import("bun").FileSink;
       stdin.write(new TextEncoder().encode(line));
+
+      // Timeout guard to prevent infinite hang
+      const timer = setTimeout(() => {
+        if (this.pendingRequests.has(id)) {
+          this.pendingRequests.delete(id);
+          reject(new Error(`MCP request timed out after ${timeoutMs}ms: ${method}`));
+        }
+      }, timeoutMs);
+
+      // Wrap resolve/reject to clear the timer
+      const original = this.pendingRequests.get(id)!;
+      this.pendingRequests.set(id, {
+        resolve: (v) => { clearTimeout(timer); original.resolve(v); },
+        reject: (e) => { clearTimeout(timer); original.reject(e); },
+      });
     });
   }
 

@@ -39,6 +39,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
     config.planFile,
     config.agents.taskAgent.systemPrompt,
     config.agents.taskAgent.reasoningEffort,
+    config.agents.taskAgent.maxTokens,
   );
   taskAgentUsage = addTokenUsage(taskAgentUsage, taskResult.usage);
   taskAgentCalls++;
@@ -67,6 +68,8 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
       config.outputDir,
       config.agents.implementationAgent.systemPrompt,
       config.agents.implementationAgent.reasoningEffort,
+      config.agents.implementationAgent.maxTokens,
+      config.maxToolCallIterations,
     );
     implCoordUsage = addTokenUsage(implCoordUsage, coordResult.usage);
     implCoordCalls += coordResult.tasksCompleted;
@@ -105,6 +108,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
       config.playwright.headless,
       config.agents.evaluatorAgent.systemPrompt,
       config.agents.evaluatorAgent.reasoningEffort,
+      config.agents.evaluatorAgent.maxTokens,
     );
     evaluatorUsage = addTokenUsage(evaluatorUsage, evalResult.usage);
     evaluatorCalls++;
@@ -134,6 +138,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
       config.planFile,
       config.agents.taskAgent.systemPrompt,
       config.agents.taskAgent.reasoningEffort,
+      config.agents.taskAgent.maxTokens,
     );
     taskAgentUsage = addTokenUsage(taskAgentUsage, reTaskResult.usage);
     taskAgentCalls++;

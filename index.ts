@@ -14,7 +14,8 @@ Options:
   --help            Show this help message
 
 Environment Variables:
-  GITHUB_TOKEN      GitHub PAT with Copilot access (required)
+  GITHUB_TOKEN      GitHub OAuth token with Copilot access (optional if 'gh auth login' is used)
+                    Note: classic PATs are NOT supported — use 'gh auth token' or an OAuth token
 
 Example:
   bun run index.ts --design ./my-app-design.md --config ./config.json
@@ -43,9 +44,17 @@ async function main() {
   }
 
   if (!process.env["GITHUB_TOKEN"]) {
-    console.error(chalk.red("Error: GITHUB_TOKEN environment variable is not set."));
-    console.error("Copy .env.example to .env and add your GitHub token.");
-    process.exit(1);
+    // No env token — the client will try `gh auth token` automatically.
+    // Only warn; don't exit. If gh is also unavailable the error surfaces at first LLM call.
+    const ghAvailable = await Bun.$`gh auth token`.quiet().then(() => true).catch(() => false);
+    if (!ghAvailable) {
+      console.error(chalk.red("Error: No GitHub token available."));
+      console.error("Either:");
+      console.error("  1. Set GITHUB_TOKEN in .env (must be a GitHub OAuth token, not a PAT)");
+      console.error("  2. Run `gh auth login` to authenticate via the GitHub CLI");
+      process.exit(1);
+    }
+    console.log(chalk.dim("No GITHUB_TOKEN in env — using `gh auth token` automatically."));
   }
 
   const configPath = args.config ?? "./config.json";

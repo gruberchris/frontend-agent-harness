@@ -1,18 +1,40 @@
 import OpenAI from "openai";
 import type { LLMMessage, LLMResponse, ToolDefinition, TokenUsage } from "./types.ts";
 
+async function resolveToken(): Promise<string> {
+  const envToken = process.env["GITHUB_TOKEN"];
+  if (envToken) return envToken;
+
+  // Fall back to `gh auth token` (GitHub CLI) if no env var is set
+  try {
+    const result = await Bun.$`gh auth token`.quiet();
+    const token = result.stdout.toString().trim();
+    if (token) return token;
+  } catch {
+    // gh not installed or not authenticated — fall through to error
+  }
+
+  throw new Error(
+    "No GitHub token found. Set GITHUB_TOKEN in .env or run `gh auth login` to authenticate via the GitHub CLI.\n" +
+    "Note: Personal Access Tokens (PATs) are not supported — the Copilot API requires an OAuth token.\n" +
+    "Get one with: gh auth login  (then the harness will pick it up automatically)"
+  );
+}
+
 export class CopilotClient {
-  private client: OpenAI;
+  private client!: OpenAI;
   private model: string;
   private reasoningEffort?: string;
+  private maxTokens?: number;
 
-  constructor(model: string, reasoningEffort?: string) {
-    const token = process.env["GITHUB_TOKEN"];
-    if (!token) {
-      throw new Error("GITHUB_TOKEN environment variable is required");
-    }
+  constructor(model: string, reasoningEffort?: string, maxTokens?: number) {
     this.model = model;
     this.reasoningEffort = reasoningEffort;
+    this.maxTokens = maxTokens;
+  }
+
+  async init(): Promise<void> {
+    const token = await resolveToken();
     this.client = new OpenAI({
       apiKey: token,
       baseURL: "https://api.githubcopilot.com",
@@ -23,6 +45,7 @@ export class CopilotClient {
     messages: LLMMessage[],
     tools?: ToolDefinition[],
   ): Promise<LLMResponse> {
+    if (!this.client) await this.init();
     const openaiMessages = messages.map((m) => {
       if (m.role === "tool") {
         return {
@@ -66,10 +89,17 @@ export class CopilotClient {
       tools: openaiTools,
       tool_choice: openaiTools ? "auto" : undefined,
       ...(this.reasoningEffort && { reasoning_effort: this.reasoningEffort as "low" | "medium" | "high" }),
+      ...(this.maxTokens && { max_tokens: this.maxTokens }),
     });
 
     const choice = response.choices[0];
-    if (!choice) throw new Error("No choices in LLM response");
+    if (!choice) {
+      const finishReason = (response as { finish_reason?: string }).finish_reason;
+      throw new Error(
+        `LLM returned no choices (model: ${this.model}, finish_reason: ${finishReason ?? "none"}).` +
+        ` This usually means the context window was exceeded or the request was filtered.`
+      );
+    }
 
     const toolCalls = (choice.message.tool_calls ?? []).map((tc) => {
       // OpenAI SDK types tool_calls with a union; both shapes have function

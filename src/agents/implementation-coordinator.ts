@@ -64,7 +64,7 @@ async function buildProjectContext(planFile: string, outputDir: string): Promise
   const tree = await buildFileTree(absOutputDir, 2);
   parts.push(`## Current Output Directory Structure\n${tree || "(empty — no files yet)"}`);
 
-  // 3. Contents of key project files that already exist
+  // 3. Contents of key project files that already exist (capped per-file)
   const keyFiles = [
     "package.json",
     "tsconfig.json",
@@ -80,16 +80,27 @@ async function buildProjectContext(planFile: string, outputDir: string): Promise
     "src/App.ts",
   ];
 
+  const FILE_CAP = 4_000; // chars per file
   for (const relPath of keyFiles) {
     const absPath = path.join(absOutputDir, relPath);
     const file = Bun.file(absPath);
     if (await file.exists()) {
-      const content = await file.text();
+      let content = await file.text();
+      if (content.length > FILE_CAP) {
+        content = content.slice(0, FILE_CAP) + `\n... (truncated, ${content.length - FILE_CAP} chars omitted)`;
+      }
       parts.push(`## ${relPath}\n\`\`\`\n${content}\n\`\`\``);
     }
   }
 
-  return parts.join("\n\n");
+  const context = parts.join("\n\n");
+
+  // Hard cap on total context size sent per task (~30KB)
+  const CONTEXT_CAP = 30_000;
+  if (context.length > CONTEXT_CAP) {
+    return context.slice(0, CONTEXT_CAP) + "\n\n... (project context truncated to fit context window)";
+  }
+  return context;
 }
 
 export async function runImplementationCoordinator(
@@ -99,6 +110,8 @@ export async function runImplementationCoordinator(
   outputDir: string,
   systemPrompt: string,
   reasoningEffort?: string,
+  maxTokens?: number,
+  maxToolCallIterations?: number,
 ): Promise<CoordinatorResult> {
   let totalUsage = emptyTokenUsage();
   let tasksCompleted = 0;
@@ -124,6 +137,8 @@ export async function runImplementationCoordinator(
       projectContext,
       systemPrompt,
       reasoningEffort,
+      maxTokens,
+      maxToolCallIterations,
     );
 
     totalUsage = addTokenUsage(totalUsage, result.usage);

@@ -71,7 +71,7 @@ describe("runHarness - success path", () => {
     const { runHarness } = await import("../pipeline/harness.ts");
 
     const report = await runHarness({
-      maxEvaluatorIterations: 3,
+      maxEvaluatorIterations: 3, maxToolCallIterations: 20,
       outputDir: tmpOutputDir,
       designFile: tmpDesignFile,
       planFile: tmpPlanFile,
@@ -104,7 +104,7 @@ describe("runHarness - max iterations failure", () => {
     const { runHarness } = await import("../pipeline/harness.ts");
 
     const report = await runHarness({
-      maxEvaluatorIterations: 2,
+      maxEvaluatorIterations: 2, maxToolCallIterations: 20,
       outputDir: tmpOutputDir,
       designFile: tmpDesignFile,
       planFile: tmpPlanFile,
@@ -129,7 +129,7 @@ describe("runHarness - missing design file", () => {
 
     expect(
       runHarness({
-        maxEvaluatorIterations: 3,
+        maxEvaluatorIterations: 3, maxToolCallIterations: 20,
         outputDir: "/tmp/output",
         designFile: "/tmp/nonexistent-design-xyz.md",
         planFile: "/tmp/plan.md",

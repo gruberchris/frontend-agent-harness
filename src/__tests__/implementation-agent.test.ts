@@ -2,19 +2,33 @@ import { describe, test, expect, mock } from "bun:test";
 import { mkdir } from "node:fs/promises";
 
 let lastChatMessages: Array<{ role: string; content: string }> = [];
+let mockCallCount = 0;
 
-// Mock CopilotClient: immediately return mark_task_complete on first call
+// Mock CopilotClient: first call writes a file, second call marks complete
 mock.module("../llm/copilot-client.ts", () => ({
   CopilotClient: class MockCopilotClient {
     constructor(_model: string) {}
     async chat(messages: unknown[]) {
       lastChatMessages = messages as Array<{ role: string; content: string }>;
+      mockCallCount++;
+      if (mockCallCount % 2 === 1) {
+        // Odd calls: write a file
+        return {
+          content: null,
+          toolCalls: [
+            { id: "w1", name: "write_file", arguments: { path: "index.html", content: "<!DOCTYPE html><html></html>" } },
+          ],
+          usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
+          finishReason: "tool_calls" as const,
+        };
+      }
+      // Even calls: mark complete
       return {
         content: null,
         toolCalls: [
           { id: "c1", name: "mark_task_complete", arguments: { summary: "Created index.html" } },
         ],
-        usage: { promptTokens: 150, completionTokens: 40, totalTokens: 190 },
+        usage: { promptTokens: 50, completionTokens: 20, totalTokens: 70 },
         finishReason: "tool_calls" as const,
       };
     }
@@ -53,7 +67,7 @@ describe("runImplementationAgent", () => {
     );
 
     expect(result.summary).toBe("Created index.html");
-    // Mock returns 190 total tokens. Should NOT be 380 (double-counted).
+    // Two LLM calls: write_file (120 tokens) + mark_complete (70 tokens) = 190 total
     expect(result.usage.totalTokens).toBe(190);
     expect(result.usage.promptTokens).toBe(150);
     expect(result.usage.completionTokens).toBe(40);

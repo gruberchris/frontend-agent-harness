@@ -86,8 +86,10 @@ export async function runImplementationAgent(
   projectContext: string | undefined,
   systemPrompt: string,
   reasoningEffort?: string,
+  maxTokens?: number,
+  maxToolCallIterations = 20,
 ): Promise<ImplementationAgentResult> {
-  const client = new CopilotClient(model, reasoningEffort);
+  const client = new CopilotClient(model, reasoningEffort, maxTokens);
   let usage = emptyTokenUsage();
 
   const absOutputDir = path.resolve(outputDir);
@@ -109,9 +111,20 @@ export async function runImplementationAgent(
   await updateTaskStatus(planFile, task.number, "in_progress");
 
   let summary = "";
+  let filesWritten = 0;
 
   // Tool-calling loop
-  for (let i = 0; i < 50; i++) {
+  for (let i = 0; i < maxToolCallIterations; i++) {
+    // Trim conversation history if it gets too large (keep system + first user + last N turns)
+    if (messages.length > 32) {
+      const system = messages[0]!;
+      const firstUser = messages[1]!;
+      // Keep only the last 20 messages (10 assistant/tool pairs) plus system + first user
+      const recent = messages.slice(-20);
+      messages.length = 0;
+      messages.push(system, firstUser, { role: "user", content: "(Earlier conversation trimmed to fit context window. Continue from the most recent state above.)" }, ...recent);
+    }
+
     const response = await client.chat(messages, IMPL_TOOLS);
     usage = addTokenUsage(usage, response.usage);
 
@@ -128,25 +141,52 @@ export async function runImplementationAgent(
       break;
     }
 
-    // Execute each tool call
-    for (const toolCall of response.toolCalls) {
-      const result = await executeTool(toolCall.name, toolCall.arguments, absOutputDir, planFile, task.number);
+    // Execute ALL tool calls in this batch before checking for completion
+    let completionCall: { id: string; summary: string } | null = null;
 
+    for (const toolCall of response.toolCalls) {
       if (toolCall.name === "mark_task_complete") {
-        summary = (toolCall.arguments["summary"] as string) ?? "Task completed";
+        // Guard: refuse completion if no files have been written yet
+        if (filesWritten === 0) {
+          messages.push({
+            role: "tool",
+            content: "Error: Cannot mark task complete — no files have been written yet. You must call write_file to create or update files before marking the task complete.",
+            toolCallId: toolCall.id,
+          });
+          console.log(`    ⚠  Refused early mark_task_complete (no files written yet)`);
+          continue;
+        }
+        completionCall = {
+          id: toolCall.id,
+          summary: (toolCall.arguments["summary"] as string) ?? "Task completed",
+        };
+        // Execute the underlying status update
+        await executeTool(toolCall.name, toolCall.arguments, absOutputDir, planFile, task.number);
         messages.push({
           role: "tool",
           content: "Task marked as completed.",
           toolCallId: toolCall.id,
         });
-        return { summary, usage };
+      } else {
+        const result = await executeTool(toolCall.name, toolCall.arguments, absOutputDir, planFile, task.number);
+        if (toolCall.name === "write_file" && !result.startsWith("Error")) {
+          filesWritten++;
+          console.log(`    📝 wrote ${toolCall.arguments["path"]}`);
+        } else if (toolCall.name === "run_command") {
+          console.log(`    $ ${toolCall.arguments["command"]}`);
+        }
+        messages.push({
+          role: "tool",
+          content: result,
+          toolCallId: toolCall.id,
+        });
       }
+    }
 
-      messages.push({
-        role: "tool",
-        content: result,
-        toolCallId: toolCall.id,
-      });
+    // After processing the full batch, return if task was completed
+    if (completionCall) {
+      summary = completionCall.summary;
+      return { summary, usage };
     }
   }
 
@@ -168,7 +208,12 @@ async function executeTool(
         const filePath = path.join(absOutputDir, String(args["path"] ?? ""));
         const file = Bun.file(filePath);
         if (!(await file.exists())) return `Error: File not found: ${args["path"]}`;
-        return await file.text();
+        const content = await file.text();
+        const CAP = 12_000;
+        if (content.length > CAP) {
+          return content.slice(0, CAP) + `\n... (truncated, ${content.length - CAP} chars omitted — use write_file to overwrite the full file)`;
+        }
+        return content;
       }
 
       case "write_file": {

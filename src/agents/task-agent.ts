@@ -13,8 +13,9 @@ export async function runTaskAgent(
   planFile: string,
   systemPrompt: string,
   reasoningEffort?: string,
+  maxTokens?: number,
 ): Promise<TaskAgentResult> {
-  const client = new CopilotClient(model, reasoningEffort);
+  const client = new CopilotClient(model, reasoningEffort, maxTokens);
   const usage = emptyTokenUsage();
 
   const messages: LLMMessage[] = [

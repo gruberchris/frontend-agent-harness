@@ -2,8 +2,10 @@ import { describe, test, expect, mock, afterAll } from "bun:test";
 
 // Capture the arguments passed to runImplementationAgent so tests can inspect them
 let capturedContextArg: string | undefined;
+let coordMockCallCount = 0;
 
-// Mock CopilotClient so the real implementation agent completes immediately
+// Mock CopilotClient so the real implementation agent completes:
+// odd-numbered calls write a file; even-numbered calls mark complete
 mock.module("../llm/copilot-client.ts", () => ({
   CopilotClient: class MockCopilotClient {
     constructor(_model: string) {}
@@ -12,12 +14,24 @@ mock.module("../llm/copilot-client.ts", () => ({
       const msgs = _messages as Array<{ role: string; content: string }>;
       const userMsg = msgs.find((m) => m.role === "user");
       if (userMsg) capturedContextArg = userMsg.content;
+      coordMockCallCount++;
+      if (coordMockCallCount % 2 === 1) {
+        // Write a file first so the guard is satisfied
+        return {
+          content: null,
+          toolCalls: [
+            { id: "w1", name: "write_file", arguments: { path: "index.html", content: "<html></html>" } },
+          ],
+          usage: { promptTokens: 70, completionTokens: 30, totalTokens: 100 },
+          finishReason: "tool_calls",
+        };
+      }
       return {
         content: null,
         toolCalls: [
           { id: "c1", name: "mark_task_complete", arguments: { summary: "Task done" } },
         ],
-        usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+        usage: { promptTokens: 30, completionTokens: 20, totalTokens: 50 },
         finishReason: "tool_calls",
       };
     }
@@ -110,7 +124,7 @@ describe("runImplementationCoordinator", () => {
       "You are a coordinator.",
     );
 
-    // Mock returns 150 total tokens for 1 task. Should NOT be 300 (double-counted).
+    // Mock returns 150 total tokens per task (write_file call: 100 + mark_complete call: 50). Should NOT be 300 (double-counted).
     expect(result.usage.totalTokens).toBe(150);
     expect(result.usage.promptTokens).toBe(100);
     expect(result.usage.completionTokens).toBe(50);

@@ -6,10 +6,12 @@ const AgentConfigSchema = z.object({
   model: z.string().min(1),
   systemPrompt: z.string().min(1),
   reasoningEffort: z.enum(REASONING_EFFORT_VALUES).optional(),
+  maxTokens: z.number().int().min(256).optional(),
 });
 
 export const HarnessConfigSchema = z.object({
   maxEvaluatorIterations: z.number().int().min(1),
+  maxToolCallIterations: z.number().int().min(1),
   outputDir: z.string(),
   designFile: z.string(),
   planFile: z.string(),
@@ -33,6 +35,7 @@ export type HarnessConfig = z.infer<typeof HarnessConfigSchema>;
 
 const DEFAULTS: HarnessConfig = {
   maxEvaluatorIterations: 3,
+  maxToolCallIterations: 20,
   outputDir: "./output",
   designFile: "./design.md",
   planFile: "./plan.md",
@@ -153,6 +156,9 @@ export async function loadConfig(configPath: string): Promise<HarnessConfig> {
     ...DEFAULTS,
     ...(raw["maxEvaluatorIterations"] !== undefined && {
       maxEvaluatorIterations: raw["maxEvaluatorIterations"] as number,
+    }),
+    ...(raw["maxToolCallIterations"] !== undefined && {
+      maxToolCallIterations: raw["maxToolCallIterations"] as number,
     }),
     ...(raw["outputDir"] !== undefined && { outputDir: raw["outputDir"] as string }),
     ...(raw["designFile"] !== undefined && { designFile: raw["designFile"] as string }),

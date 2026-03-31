@@ -65,8 +65,9 @@ export async function runEvaluatorAgent(
   playwrightHeadless: boolean,
   systemPrompt: string,
   reasoningEffort?: string,
+  maxTokens?: number,
 ): Promise<EvaluatorResult> {
-  const client = new CopilotClient(model, reasoningEffort);
+  const client = new CopilotClient(model, reasoningEffort, maxTokens);
   let usage = emptyTokenUsage();
   const playwright = new PlaywrightMcpServer(playwrightBrowser, playwrightHeadless);
 
@@ -74,9 +75,10 @@ export async function runEvaluatorAgent(
 
   try {
     mcpTools = await playwright.start();
+    console.log(`    🎭 Playwright MCP ready (${mcpTools.length} tools)`);
   } catch (err) {
     // If Playwright MCP can't start, do a text-only evaluation
-    console.warn(`Warning: Could not start Playwright MCP: ${err}. Doing text-only evaluation.`);
+    console.warn(`    ⚠  Could not start Playwright MCP: ${err}. Doing text-only evaluation.`);
   }
 
   const availableTools: ToolDefinition[] = [
@@ -143,6 +145,7 @@ Use the available Playwright tools to navigate to the application, explore its f
         });
       } else {
         // Execute Playwright MCP tool
+        console.log(`    🌐 ${toolCall.name}(${JSON.stringify(toolCall.arguments).slice(0, 80)})`);
         let toolResult: string;
         try {
           const result = await playwright.callTool(toolCall.name, toolCall.arguments);

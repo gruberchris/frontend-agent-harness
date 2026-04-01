@@ -3,6 +3,7 @@ import { addTokenUsage, emptyTokenUsage, type TokenUsage } from "../llm/types.ts
 import type { LLMMessage, ToolDefinition } from "../llm/types.ts";
 import { updateTaskStatus } from "../plan/plan-parser.ts";
 import type { PlanTask } from "../plan/types.ts";
+import { buildMessageContent, type DesignContent } from "../design/design-loader.ts";
 import * as path from "node:path";
 import * as fs from "node:fs/promises";
 
@@ -149,7 +150,7 @@ export interface ImplementationAgentResult {
 export async function runImplementationAgent(
   model: string,
   task: PlanTask,
-  designContent: string,
+  design: DesignContent,
   planFile: string,
   outputDir: string,
   projectContext: string | undefined,
@@ -172,7 +173,10 @@ export async function runImplementationAgent(
     { role: "system", content: systemPrompt },
     {
       role: "user",
-      content: `${contextSection}Implement the following task:\n\n### Task ${task.number}: ${task.title}\n**Description**: ${task.description}\n**Acceptance Criteria**: ${task.acceptanceCriteria}\n**Example Code**:\n${task.exampleCode}\n\n---\n\nDesign context:\n${designContent}\n\nBegin implementation now. The project context above shows the current state — ensure your changes are consistent with existing files and the declared tech stack.`,
+      content: buildMessageContent(
+        `${contextSection}Implement the following task:\n\n### Task ${task.number}: ${task.title}\n**Description**: ${task.description}\n**Acceptance Criteria**: ${task.acceptanceCriteria}\n**Example Code**:\n${task.exampleCode}\n\n---\n\nDesign context:\n${design.text}\n\nBegin implementation now. The project context above shows the current state — ensure your changes are consistent with existing files and the declared tech stack.`,
+        design.images,
+      ),
     },
   ];
 

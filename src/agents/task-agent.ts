@@ -1,6 +1,7 @@
 import { CopilotClient } from "../llm/copilot-client.ts";
 import { emptyTokenUsage, type TokenUsage } from "../llm/types.ts";
 import type { LLMMessage } from "../llm/types.ts";
+import { buildMessageContent, type DesignContent } from "../design/design-loader.ts";
 
 export interface TaskAgentResult {
   planContent: string;
@@ -9,7 +10,7 @@ export interface TaskAgentResult {
 
 export async function runTaskAgent(
   model: string,
-  designContent: string,
+  design: DesignContent,
   planFile: string,
   memoryFile: string,
   systemPrompt: string,
@@ -51,7 +52,10 @@ ${existingFileTree}
     { role: "system", content: systemPrompt },
     {
       role: "user",
-      content: `Please create an implementation plan for the following design document:\n\n---\n${designContent}\n---${feedbackSection}${fileContextSection}\n\nGenerate the complete task list now. Ensure you address any issues mentioned in the feedback section above.`,
+      content: buildMessageContent(
+        `Please create an implementation plan for the following design document:\n\n---\n${design.text}\n---${feedbackSection}${fileContextSection}\n\nGenerate the complete task list now. Ensure you address any issues mentioned in the feedback section above.`,
+        design.images,
+      ),
     },
   ];
 

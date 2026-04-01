@@ -92,7 +92,7 @@ describe("runImplementationCoordinator", () => {
     const { runImplementationCoordinator } = await import("../agents/implementation-coordinator.ts");
     const result = await runImplementationCoordinator(
       "gpt-4o",
-      "# Design",
+      { text: "# Design", images: [] },
       tmpPlanFile,
       tmpMemoryFile,
       tmpOutputDir,
@@ -112,7 +112,7 @@ describe("runImplementationCoordinator", () => {
     await Bun.write(tmpPlanFile, MULTI_TASK_PLAN);
 
     const { runImplementationCoordinator } = await import("../agents/implementation-coordinator.ts");
-    await runImplementationCoordinator("gpt-4o", "# Design", tmpPlanFile, tmpMemoryFile, tmpOutputDir, "You are a coordinator.");
+    await runImplementationCoordinator("gpt-4o", { text: "# Design", images: [] }, tmpPlanFile, tmpMemoryFile, tmpOutputDir, "You are a coordinator.");
 
     expect(capturedContextArg).toBeDefined();
     expect(capturedContextArg!).toContain("Project Context");
@@ -134,7 +134,7 @@ describe("runImplementationCoordinator", () => {
     const { runImplementationCoordinator } = await import("../agents/implementation-coordinator.ts");
     const result = await runImplementationCoordinator(
       "gpt-4o",
-      "# Design",
+      { text: "# Design", images: [] },
       tmpPlanFile,
       tmpMemoryFile,
       tmpOutputDir,
@@ -158,7 +158,7 @@ describe("runImplementationCoordinator", () => {
     const { runImplementationCoordinator } = await import("../agents/implementation-coordinator.ts");
     const result = await runImplementationCoordinator(
       "gpt-4o",
-      "# Design",
+      { text: "# Design", images: [] },
       tmpPlanFile,
       tmpMemoryFile,
       tmpOutputDir,

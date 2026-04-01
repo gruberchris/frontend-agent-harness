@@ -60,7 +60,7 @@ describe("runTaskAgent", () => {
     trackedFiles.push(tmpPlanFile, tmpMemoryFile);
     const systemPrompt = "You are an expert software architect.";
 
-    const result = await runTaskAgent("gpt-4o", "# My App\n\nA todo app with React.", tmpPlanFile, tmpMemoryFile, systemPrompt);
+    const result = await runTaskAgent("gpt-4o", { text: "# My App\n\nA todo app with React.", images: [] }, tmpPlanFile, tmpMemoryFile, systemPrompt);
 
     expect(result.planContent).toContain("Task 1");
     expect(result.planContent).toContain("pending");
@@ -78,7 +78,7 @@ describe("runTaskAgent", () => {
     const tmpMemoryFile = `/tmp/task-agent-memory-${Date.now()}.md`;
     trackedFiles.push(tmpPlanFile, tmpMemoryFile);
 
-    const result = await runTaskAgent("gpt-4o", "Simple design", tmpPlanFile, tmpMemoryFile, "You are an architect.");
+    const result = await runTaskAgent("gpt-4o", { text: "Simple design", images: [] }, tmpPlanFile, tmpMemoryFile, "You are an architect.");
     expect(result.usage.totalTokens).toBeGreaterThan(0);
   });
 
@@ -90,7 +90,7 @@ describe("runTaskAgent", () => {
     trackedFiles.push(tmpPlanFile, tmpMemoryFile);
     const customPrompt = "You are a specialist in React applications.";
 
-    await runTaskAgent("gpt-4o", "# My App", tmpPlanFile, tmpMemoryFile, customPrompt);
+    await runTaskAgent("gpt-4o", { text: "# My App", images: [] }, tmpPlanFile, tmpMemoryFile, customPrompt);
 
     const systemMsg = lastChatCallMessages.find((m) => m.role === "system");
     expect(systemMsg).toBeDefined();

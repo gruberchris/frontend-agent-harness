@@ -1,6 +1,7 @@
 import { addTokenUsage, emptyTokenUsage, type TokenUsage } from "../llm/types.ts";
 import { getNextPendingTask, readPlanHeader } from "../plan/plan-parser.ts";
 import { runImplementationAgent } from "./implementation-agent.ts";
+import { type DesignContent } from "../design/design-loader.ts";
 import chalk from "chalk";
 import * as path from "node:path";
 import * as fs from "node:fs/promises";
@@ -82,7 +83,7 @@ async function buildProjectContext(planFile: string, outputDir: string, memoryFi
 
 export async function runImplementationCoordinator(
   model: string,
-  designContent: string,
+  design: DesignContent,
   planFile: string,
   memoryFile: string,
   outputDir: string,
@@ -109,7 +110,7 @@ export async function runImplementationCoordinator(
     const result = await runImplementationAgent(
       model,
       nextTask,
-      designContent,
+      design,
       planFile,
       outputDir,
       projectContext,

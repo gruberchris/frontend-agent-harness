@@ -68,7 +68,7 @@ describe("runImplementationAgent", () => {
     const result = await runImplementationAgent(
       "gpt-4o",
       task,
-      "# Design",
+      { text: "# Design", images: [] },
       tmpPlanFile,
       tmpOutputDir,
       undefined,
@@ -113,7 +113,7 @@ describe("runImplementationAgent", () => {
     await runImplementationAgent(
       "gpt-4o",
       task,
-      "# Design",
+      { text: "# Design", images: [] },
       tmpPlanFile,
       tmpOutputDir,
       injectedContext,
@@ -154,7 +154,7 @@ describe("runImplementationAgent", () => {
     await runImplementationAgent(
       "gpt-4o",
       task,
-      "# Design",
+      { text: "# Design", images: [] },
       tmpPlanFile,
       tmpOutputDir,
       undefined,
@@ -213,7 +213,7 @@ describe("runImplementationAgent", () => {
     const result = await runImplementationAgent(
       "gpt-4o",
       task,
-      "# Design",
+      { text: "# Design", images: [] },
       tmpPlanFile,
       tmpOutputDir,
       undefined,

@@ -4,6 +4,7 @@ import { runEvaluatorAgent } from "../agents/evaluator-agent.ts";
 import { startDevServer } from "../server/dev-server.ts";
 import { printReport, type AgentStepStats, type PipelineReport } from "./reporting.ts";
 import { addTokenUsage, emptyTokenUsage } from "../llm/types.ts";
+import { loadDesignContent } from "../design/design-loader.ts";
 import type { HarnessConfig } from "../config.ts";
 import chalk from "chalk";
 import * as fs from "node:fs/promises";
@@ -74,14 +75,14 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
 
   // ── Step 1: Task Agent (initial plan) ───────────────────────────────────────
   console.log(chalk.bold("📐 Step 1: Task Agent — generating plan.md..."));
-  const designContent = await designFile.text();
+  const design = await loadDesignContent(config.designFile);
 
   let taskAgentUsage = emptyTokenUsage();
   let taskAgentCalls = 0;
 
   const taskResult = await runTaskAgent(
     config.agents.taskAgent.model,
-    designContent,
+    design,
     config.planFile,
     config.memoryFile,
     config.agents.taskAgent.systemPrompt,
@@ -110,7 +111,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
     // ── Step 2: Implementation Coordinator ──────────────────────────────────
     const coordResult = await runImplementationCoordinator(
       config.agents.implementationAgent.model,
-      await Bun.file(config.designFile).text(), // re-read original design (now kept pristine)
+      design, // re-use loaded design (images already in memory)
       config.planFile,
       config.memoryFile,
       config.outputDir,
@@ -184,7 +185,6 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
 
     // ── Re-run Task Agent with evaluator feedback ─────────────────────────────
     console.log(chalk.bold(`\n🔄 Re-running Task Agent with evaluator feedback (memory.md updated)...`));
-    const updatedDesign = await Bun.file(config.designFile).text();
 
     let existingFileTree: string | undefined;
     if (config.cleanOutputOnRetry) {
@@ -197,7 +197,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
 
     const reTaskResult = await runTaskAgent(
       config.agents.taskAgent.model,
-      updatedDesign,
+      design, // re-use same loaded design (design.md is kept pristine)
       config.planFile,
       config.memoryFile,
       config.agents.taskAgent.systemPrompt,

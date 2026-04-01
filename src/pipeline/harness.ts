@@ -134,6 +134,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
       await devServerHandle.stop();
     }
     console.log(chalk.bold(`\n🖥️  Starting dev server at ${appUrl}...`));
+    let devServerError: string | undefined;
     try {
       devServerHandle = await startDevServer(
         config.appDir,
@@ -143,7 +144,8 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
       activeHandles.add(devServerHandle);
       console.log(chalk.green(`✅ Dev server running at ${appUrl}`));
     } catch (err) {
-      console.warn(chalk.yellow(`⚠️  Could not start dev server: ${err}`));
+      devServerError = String(err);
+      console.warn(chalk.yellow(`⚠️  Could not start dev server: ${devServerError}`));
     }
 
     // ── Step 3: Evaluator Agent ──────────────────────────────────────────────
@@ -163,6 +165,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
       config.agents.evaluatorAgent.systemPrompt,
       config.agents.evaluatorAgent.reasoningEffort,
       config.agents.evaluatorAgent.maxTokens,
+      devServerError,
     );
     evaluatorUsage = addTokenUsage(evaluatorUsage, evalResult.usage);
     evaluatorCalls++;

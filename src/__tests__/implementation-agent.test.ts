@@ -596,3 +596,39 @@ describe("run_command output truncation", () => {
     expect(capturedToolResult).toContain("stderr:");
   });
 });
+
+describe("agent path normalization", () => {
+  test("write_file with output-dir-prefixed path lands in the correct location", async () => {
+    const tmpDir = `/tmp/path-norm-${Date.now()}`;
+    const tmpPlan = `/tmp/path-norm-plan-${Date.now()}.md`;
+    trackedFiles.push(tmpDir, tmpPlan);
+    await Bun.write(tmpPlan, `### Task 1: Scaffold\n**Status**: pending\n**Description**: Create file\n**Acceptance Criteria**: Done\n**Example Code**:\n\`\`\`\n\`\`\`\n`);
+
+    // Compute the output-dir-relative prefix the agent mistakenly includes
+    const cwd = process.cwd();
+    const relFromCwd = require("node:path").relative(cwd, tmpDir); // e.g. "../../tmp/path-norm-..."
+    // The agent mistakenly includes the output dir in the path
+    const agentPath = `${relFromCwd}/src/main.tsx`;
+
+    let seq = 0;
+    mock.module("../llm/copilot-client.ts", () => ({
+      CopilotClient: class {
+        async chat() {
+          seq++;
+          if (seq === 1) {
+            return { content: null, toolCalls: [{ id: "w1", name: "write_file", arguments: { path: agentPath, content: "// main" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+          }
+          return { content: null, toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "Done" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+        }
+      },
+    }));
+
+    const { runImplementationAgent } = await import("../agents/implementation-agent.ts");
+    await runImplementationAgent("gpt-4o", { number: 1, title: "Scaffold", status: "pending", description: "Create file", acceptanceCriteria: "Done", exampleCode: "", raw: "" }, { text: "# Design", images: [] }, tmpPlan, tmpDir, undefined, "sys");
+
+    // File should be at tmpDir/src/main.tsx, NOT at tmpDir/<prefix>/src/main.tsx
+    const correctFile = Bun.file(`${tmpDir}/src/main.tsx`);
+    expect(await correctFile.exists()).toBe(true);
+    expect(await correctFile.text()).toBe("// main");
+  });
+});

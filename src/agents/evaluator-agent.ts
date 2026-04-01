@@ -68,19 +68,25 @@ export async function runEvaluatorAgent(
   systemPrompt: string,
   reasoningEffort?: string,
   maxTokens?: number,
+  devServerError?: string,
 ): Promise<EvaluatorResult> {
   const client = new CopilotClient(model, reasoningEffort, maxTokens);
   let usage = emptyTokenUsage();
-  const playwright = new PlaywrightMcpServer(playwrightBrowser, playwrightHeadless, outputDir);
 
+  // Skip Playwright entirely when we know the dev server is down — no point navigating
   let mcpTools: McpTool[] = [];
-
-  try {
-    mcpTools = await playwright.start();
-    console.log(`    🎭 Playwright MCP ready (${mcpTools.length} tools)`);
-  } catch (err) {
-    // If Playwright MCP can't start, do a text-only evaluation
-    console.warn(`    ⚠️  Could not start Playwright MCP: ${err}. Doing text-only evaluation.`);
+  let playwright: PlaywrightMcpServer | null = null;
+  if (!devServerError) {
+    playwright = new PlaywrightMcpServer(playwrightBrowser, playwrightHeadless, outputDir);
+    try {
+      mcpTools = await playwright.start();
+      console.log(`    🎭 Playwright MCP ready (${mcpTools.length} tools)`);
+    } catch (err) {
+      // If Playwright MCP can't start, do a text-only evaluation
+      console.warn(`    ⚠️  Could not start Playwright MCP: ${err}. Doing text-only evaluation.`);
+    }
+  } else {
+    console.warn(`    ⚠️  Dev server is down — skipping Playwright, running text-only evaluation.`);
   }
 
   const availableTools: ToolDefinition[] = [
@@ -92,7 +98,9 @@ export async function runEvaluatorAgent(
     { role: "system", content: systemPrompt },
     {
       role: "user",
-      content: `Evaluate the web application running at: ${appUrl}
+      content: devServerError
+        ? `The dev server FAILED TO START at ${appUrl}. Do NOT attempt to use Playwright — it will not work.\n\nDev server error:\n\`\`\`\n${devServerError}\n\`\`\`\n\nBased on this error and the design below, call decide_needs_work with specific corrections that will fix the problem (e.g. missing files, wrong build config, missing entry point).\n\nOriginal design document:\n---\n${designContent}\n---`
+        : `Evaluate the web application running at: ${appUrl}
 
 Original design document:
 ---
@@ -161,6 +169,14 @@ Use the available Playwright tools to navigate to the application, explore its f
       } else {
         // Execute Playwright MCP tool
         console.log(`    🌐 ${toolCall.name}(${JSON.stringify(toolCall.arguments).slice(0, 80)})`);
+        if (!playwright) {
+          messages.push({
+            role: "tool",
+            content: "Error: Playwright is not available — dev server is down.",
+            toolCallId: toolCall.id,
+          });
+          continue;
+        }
         try {
           const result = await playwright.callTool(toolCall.name, toolCall.arguments);
           const textParts = result.content
@@ -220,7 +236,7 @@ Use the available Playwright tools to navigate to the application, explore its f
     if (decided) break;
   }
 
-  await playwright.stop();
+  await playwright?.stop();
 
   // If NEEDS_WORK, append corrections to memory.md
   if (decision === "NEEDS_WORK" && corrections) {

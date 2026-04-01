@@ -335,6 +335,21 @@ export async function runImplementationAgent(
 
 const fileBackupCache = new Map<string, string>();
 
+/**
+ * Resolve a path provided by the agent to an absolute path inside absOutputDir.
+ * Handles the common mistake where the agent includes the output dir in the path
+ * (e.g. "output/app/src/main.tsx" instead of "src/main.tsx").
+ */
+function resolveAgentPath(agentPath: string, absOutputDir: string): string {
+  // If the agent gave us a path that, when resolved from CWD, lands inside absOutputDir, use it directly.
+  const fromCwd = path.resolve(agentPath);
+  if (fromCwd.startsWith(absOutputDir + path.sep) || fromCwd === absOutputDir) {
+    return fromCwd;
+  }
+  // Normal case: treat as relative to absOutputDir.
+  return path.join(absOutputDir, agentPath);
+}
+
 async function executeTool(
   name: string,
   args: Record<string, unknown>,
@@ -345,7 +360,7 @@ async function executeTool(
   try {
     switch (name) {
       case "read_file": {
-        const filePath = path.join(absOutputDir, String(args["path"] ?? ""));
+        const filePath = resolveAgentPath(String(args["path"] ?? ""), absOutputDir);
         const file = Bun.file(filePath);
         if (!(await file.exists())) return `Error: File not found: ${args["path"]}`;
         const content = await file.text();
@@ -358,7 +373,7 @@ async function executeTool(
 
       case "write_file": {
         const relPath = String(args["path"] ?? "");
-        const filePath = path.join(absOutputDir, relPath);
+        const filePath = resolveAgentPath(relPath, absOutputDir);
         await fs.mkdir(path.dirname(filePath), { recursive: true });
         
         const file = Bun.file(filePath);
@@ -374,7 +389,7 @@ async function executeTool(
 
       case "replace_text": {
         const relPath = String(args["path"] ?? "");
-        const filePath = path.join(absOutputDir, relPath);
+        const filePath = resolveAgentPath(relPath, absOutputDir);
         const oldStr = String(args["old_string"] ?? "");
         const newStr = String(args["new_string"] ?? "");
         
@@ -398,7 +413,7 @@ async function executeTool(
         if (backup === undefined) {
           return `Error: No backup found for ${relPath}`;
         }
-        const filePath = path.join(absOutputDir, relPath);
+        const filePath = resolveAgentPath(relPath, absOutputDir);
         if (backup === "") {
           await fs.unlink(filePath).catch(() => {});
           return `File deleted (reverted to empty state): ${relPath}`;
@@ -422,7 +437,7 @@ async function executeTool(
       case "grep_search": {
         const pattern = String(args["pattern"] ?? "");
         const dir = String(args["dir"] ?? ".");
-        const dirPath = path.join(absOutputDir, dir);
+        const dirPath = resolveAgentPath(dir, absOutputDir);
         const proc = Bun.spawn(["grep", "-rnE", pattern, "."], { cwd: dirPath, stdout: "pipe", stderr: "pipe" });
         const stdout = await new Response(proc.stdout).text();
         await proc.exited;
@@ -432,7 +447,7 @@ async function executeTool(
 
       case "view_code_symbols": {
         const relPath = String(args["path"] ?? "");
-        const filePath = path.join(absOutputDir, relPath);
+        const filePath = resolveAgentPath(relPath, absOutputDir);
         const file = Bun.file(filePath);
         if (!(await file.exists())) return `Error: File not found: ${relPath}`;
         const content = await file.text();
@@ -458,7 +473,7 @@ async function executeTool(
       }
 
       case "list_directory": {
-        const dirPath = path.join(absOutputDir, String(args["path"] ?? "."));
+        const dirPath = resolveAgentPath(String(args["path"] ?? "."), absOutputDir);
         try {
           const entries = await fs.readdir(dirPath, { withFileTypes: true });
           return entries

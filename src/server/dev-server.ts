@@ -1,3 +1,5 @@
+import * as path from "node:path";
+
 export interface DevServerHandle {
   url: string;
   stop: () => Promise<void>;
@@ -12,21 +14,38 @@ export async function startDevServer(
   port: number,
 ): Promise<DevServerHandle> {
   const [cmd, ...cmdArgs] = startCommand.split(" ");
+  const absCwd = path.resolve(outputDir);
   const proc = Bun.spawn([cmd!, ...cmdArgs], {
-    cwd: outputDir,
+    cwd: absCwd,
     stdout: "pipe",
     stderr: "pipe",
   });
 
   const url = `http://localhost:${port}`;
 
+  // Drain stderr into a buffer for error reporting — capped at 3 KB
+  const stderrChunks: string[] = [];
+  (async () => {
+    try {
+      const decoder = new TextDecoder();
+      for await (const chunk of proc.stderr as AsyncIterable<Uint8Array>) {
+        stderrChunks.push(decoder.decode(chunk));
+        if (stderrChunks.join("").length > 3_000) break;
+      }
+    } catch { /* ignore */ }
+  })();
+
   // Poll until the server is responsive or timeout
   const deadline = Date.now() + HEALTH_CHECK_TIMEOUT_MS;
   while (Date.now() < deadline) {
-    if (proc.killed) {
-      throw new Error("Dev server process exited prematurely before becoming responsive.");
+    // exitCode is non-null as soon as the process exits for any reason
+    if (proc.exitCode !== null || proc.killed) {
+      const stderr = stderrChunks.join("").slice(0, 2_000).trim();
+      throw new Error(
+        `Dev server process exited prematurely (exit code ${proc.exitCode ?? "killed"}).${stderr ? `\nStderr:\n${stderr}` : ""}`,
+      );
     }
-    
+
     try {
       const res = await fetch(url, { signal: AbortSignal.timeout(2000) });
       if (res.ok || res.status < 500) return {
@@ -42,8 +61,11 @@ export async function startDevServer(
     await Bun.sleep(HEALTH_CHECK_INTERVAL_MS);
   }
 
-  // If we reach here, we timed out. Kill it.
+  // Timed out — kill and report
   proc.kill();
   await proc.exited;
-  throw new Error(`Dev server failed to start within ${HEALTH_CHECK_TIMEOUT_MS}ms`);
+  const stderr = stderrChunks.join("").slice(0, 2_000).trim();
+  throw new Error(
+    `Dev server failed to start within ${HEALTH_CHECK_TIMEOUT_MS / 1000}s.${stderr ? `\nStderr:\n${stderr}` : ""}`,
+  );
 }

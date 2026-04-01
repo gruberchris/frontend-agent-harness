@@ -2,6 +2,8 @@ import { addTokenUsage, emptyTokenUsage, type TokenUsage } from "../llm/types.ts
 import { getNextPendingTask, readPlanHeader } from "../plan/plan-parser.ts";
 import { runImplementationAgent } from "./implementation-agent.ts";
 import { type DesignContent } from "../design/design-loader.ts";
+import { findBrokenReferences } from "../validation/reference-checker.ts";
+import type { PlanTask } from "../plan/types.ts";
 import chalk from "chalk";
 import * as path from "node:path";
 import * as fs from "node:fs/promises";
@@ -131,6 +133,50 @@ export async function runImplementationCoordinator(
     tasksCompleted++;
 
     console.log(chalk.green(`  ✅ Task ${nextTask.number} completed: ${result.summary}`));
+  }
+
+  // ── Post-implementation reference validation & repair ──────────────────────
+  // Scan ALL generated files for broken local references (HTML src/href,
+  // TS/JS imports, CSS @import). If any are found, run one targeted repair
+  // task so the build doesn't fail on a trivial missing-file error.
+  const absOutputDir = path.resolve(outputDir);
+  const brokenRefs = await findBrokenReferences(absOutputDir);
+  if (brokenRefs.length > 0) {
+    const list = brokenRefs
+      .map((r) => `- \`${r.missingFile}\` (referenced in \`${r.inFile}\`)`)
+      .join("\n");
+    console.log(chalk.yellow(`\n⚠️  Found ${brokenRefs.length} broken reference(s) — running repair pass...`));
+    brokenRefs.forEach((r) => console.log(chalk.dim(`    missing: ${r.missingFile} ← ${r.inFile}`)));
+
+    const repairTask: PlanTask = {
+      number: tasksCompleted + 1,
+      title: "Repair: Create missing referenced files",
+      status: "pending",
+      description:
+        `The following files are referenced by the app but do not exist on disk:\n${list}\n\n` +
+        `Read each referencing file to understand what the missing file should contain, then create it.`,
+      acceptanceCriteria: "All referenced files exist and the app compiles without errors.",
+      exampleCode: "",
+      raw: "",
+    };
+
+    const repairContext = await buildProjectContext(planFile, outputDir, memoryFile);
+    const repairResult = await runImplementationAgent(
+      model,
+      repairTask,
+      { ...design, images: [] }, // no images needed for a repair pass
+      planFile,
+      outputDir,
+      repairContext,
+      systemPrompt,
+      reasoningEffort,
+      maxTokens,
+      maxToolCallIterations,
+    );
+
+    totalUsage = addTokenUsage(totalUsage, repairResult.usage);
+    tasksCompleted++;
+    console.log(chalk.green(`  ✅ Repair pass: ${repairResult.summary}`));
   }
 
   return { tasksCompleted, usage: totalUsage };

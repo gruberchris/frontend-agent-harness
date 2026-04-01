@@ -178,3 +178,93 @@ describe("runEvaluatorAgent - outputDir wiring", () => {
     expect(capturedMcpOutputDir!).toBe("/tmp/my-output-dir");
   });
 });
+
+describe("runEvaluatorAgent - devServerError", () => {
+  test("skips Playwright and returns NEEDS_WORK with corrections when dev server is down", async () => {
+    mockDecision = "needs_work";
+    capturedMcpOutputDir = undefined;
+
+    const { runEvaluatorAgent } = await import("../agents/evaluator-agent.ts");
+    const tmpDesignFile = `/tmp/eval-design-dse-${Date.now()}.md`;
+    const tmpPlanFile = `/tmp/eval-plan-dse-${Date.now()}.md`;
+    const tmpMemoryFile = `/tmp/eval-memory-dse-${Date.now()}.md`;
+    trackedFiles.push(tmpDesignFile, tmpPlanFile, tmpMemoryFile);
+    await Bun.write(tmpDesignFile, "# Design");
+
+    const devServerError = 'Dev server process exited prematurely (exit code 1).\nStderr:\nerror: Could not resolve: "./src/main.tsx"';
+
+    const result = await runEvaluatorAgent(
+      "gpt-4o",
+      "http://localhost:3000",
+      "# Design",
+      tmpPlanFile,
+      tmpDesignFile,
+      tmpMemoryFile,
+      "/tmp/eval-dse-output",
+      "chrome",
+      true,
+      "You are an evaluator.",
+      undefined,
+      undefined,
+      devServerError,
+    );
+
+    // Should still reach a NEEDS_WORK decision
+    expect(result.decision).toBe("NEEDS_WORK");
+
+    // PlaywrightMcpServer constructor should NOT have been called (capturedMcpOutputDir stays undefined)
+    // (constructor is not called — playwright is null when devServerError is set)
+    expect(capturedMcpOutputDir).toBeUndefined();
+
+    // Corrections should have been written to memory.md
+    const memory = await Bun.file(tmpMemoryFile).text();
+    expect(memory).toContain("Evaluator Findings");
+  });
+
+  test("includes the dev server error text in the initial user message", async () => {
+    mockDecision = "needs_work";
+    let capturedMessages: Array<{ role: string; content: unknown }> = [];
+
+    mock.module("../llm/copilot-client.ts", () => ({
+      CopilotClient: class {
+        async chat(messages: unknown[]) {
+          capturedMessages = messages as typeof capturedMessages;
+          return {
+            content: null,
+            toolCalls: [{ id: "c1", name: "decide_needs_work", arguments: { explanation: "server down", corrections: "create src/main.tsx" } }],
+            usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+            finishReason: "tool_calls" as const,
+          };
+        }
+      },
+    }));
+
+    const { runEvaluatorAgent } = await import("../agents/evaluator-agent.ts");
+    const tmpDesignFile = `/tmp/eval-design-msg-${Date.now()}.md`;
+    const tmpPlanFile = `/tmp/eval-plan-msg-${Date.now()}.md`;
+    const tmpMemoryFile = `/tmp/eval-memory-msg-${Date.now()}.md`;
+    trackedFiles.push(tmpDesignFile, tmpPlanFile, tmpMemoryFile);
+    await Bun.write(tmpDesignFile, "# Design");
+
+    await runEvaluatorAgent(
+      "gpt-4o",
+      "http://localhost:3000",
+      "# Design",
+      tmpPlanFile,
+      tmpDesignFile,
+      tmpMemoryFile,
+      "/tmp/eval-msg-output",
+      "chrome",
+      true,
+      "You are an evaluator.",
+      undefined,
+      undefined,
+      "error: Could not resolve: \"./src/main.tsx\"",
+    );
+
+    const userMsg = capturedMessages.find((m) => m.role === "user");
+    expect(typeof userMsg!.content).toBe("string");
+    expect(userMsg!.content as string).toContain("FAILED TO START");
+    expect(userMsg!.content as string).toContain("src/main.tsx");
+  });
+});

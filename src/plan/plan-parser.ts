@@ -114,6 +114,18 @@ export async function updateTaskStatus(
   }
 
   if (!updated) {
+    // Status line may be missing (e.g. truncated plan) — insert it after the task header
+    for (let i = 0; i < lines.length; i++) {
+      const taskHeaderMatch = lines[i]!.match(/^###\s+Task\s+(\d+):/);
+      if (taskHeaderMatch && parseInt(taskHeaderMatch[1]!, 10) === taskNumber) {
+        lines.splice(i + 1, 0, `**Status**: ${newStatus}`);
+        updated = true;
+        break;
+      }
+    }
+  }
+
+  if (!updated) {
     throw new Error(`Failed to update status for Task ${taskNumber}. Task or Status line not found.`);
   }
 

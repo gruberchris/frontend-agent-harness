@@ -39,7 +39,7 @@ export function printReport(report: PipelineReport): void {
     padStart("Prompt", COL_NUM),
     padStart("Completion", COL_NUM),
     padStart("Total", COL_NUM),
-    padStart("Calls", 8),
+    padStart("Requests", 10),
   ].join("");
   console.log(chalk.dim(header));
   console.log(chalk.dim("─".repeat(84)));
@@ -51,10 +51,12 @@ export function printReport(report: PipelineReport): void {
       padStart(step.usage.promptTokens.toLocaleString(), COL_NUM),
       padStart(step.usage.completionTokens.toLocaleString(), COL_NUM),
       padStart(step.usage.totalTokens.toLocaleString(), COL_NUM),
-      padStart(String(step.callCount), 8),
+      padStart(String(step.callCount), 10),
     ].join("");
     console.log(row);
   }
+
+  const grandTotalRequests = report.steps.reduce((acc, s) => acc + s.callCount, 0);
 
   console.log(chalk.dim("─".repeat(84)));
   const totalRow = [
@@ -62,7 +64,7 @@ export function printReport(report: PipelineReport): void {
     padStart(chalk.bold(grandTotal.promptTokens.toLocaleString()), COL_NUM),
     padStart(chalk.bold(grandTotal.completionTokens.toLocaleString()), COL_NUM),
     padStart(chalk.bold(grandTotal.totalTokens.toLocaleString()), COL_NUM),
-    padStart("", 8),
+    padStart(chalk.bold(String(grandTotalRequests)), 10),
   ].join("");
   console.log(totalRow);
   console.log(chalk.bold("═".repeat(84)));

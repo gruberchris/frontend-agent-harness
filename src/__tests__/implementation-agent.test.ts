@@ -447,3 +447,152 @@ describe("undo_edit tool", () => {
     expect(capturedToolResult).toContain("No backup");
   });
 });
+
+describe("design text truncation", () => {
+  test("truncates design.text longer than 2000 chars in the task message", async () => {
+    let capturedUserContent: unknown = "";
+    let seq = 0;
+
+    mock.module("../llm/copilot-client.ts", () => ({
+      CopilotClient: class {
+        async chat(messages: unknown[]) {
+          seq++;
+          if (seq === 1) {
+            const msgs = messages as Array<{ role: string; content: unknown }>;
+            capturedUserContent = msgs.find((m) => m.role === "user")?.content;
+          }
+          if (seq % 2 === 1) {
+            return { content: null, toolCalls: [{ id: "w1", name: "write_file", arguments: { path: "t.html", content: "<h1>x</h1>" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+          }
+          return { content: null, toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "Done" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+        }
+      },
+    }));
+
+    const tmpDir = `/tmp/design-trunc-${Date.now()}`;
+    const tmpPlan = `/tmp/design-trunc-plan-${Date.now()}.md`;
+    trackedFiles.push(tmpDir, tmpPlan);
+    await Bun.write(tmpPlan, `### Task 1: Build it\n**Status**: pending\n**Description**: Do the thing\n**Acceptance Criteria**: Done\n**Example Code**:\n\`\`\`\n\`\`\`\n`);
+
+    const longDesign = "# Design\n" + "x".repeat(3000); // well above the 2000-char cap
+    const { runImplementationAgent } = await import("../agents/implementation-agent.ts");
+    await runImplementationAgent("gpt-4o", { number: 1, title: "Build it", status: "pending", description: "Do the thing", acceptanceCriteria: "Done", exampleCode: "", raw: "" }, { text: longDesign, images: [] }, tmpPlan, tmpDir, undefined, "sys");
+
+    const content = String(capturedUserContent);
+    expect(content).toContain("truncated");
+    // The full 3000 x's must NOT appear — design was capped at 2000 chars
+    expect(content).not.toContain("x".repeat(2001));
+  });
+
+  test("does not truncate design.text of 2000 chars or fewer", async () => {
+    let capturedUserContent: unknown = "";
+    let seq = 0;
+
+    mock.module("../llm/copilot-client.ts", () => ({
+      CopilotClient: class {
+        async chat(messages: unknown[]) {
+          seq++;
+          if (seq === 1) {
+            const msgs = messages as Array<{ role: string; content: unknown }>;
+            capturedUserContent = msgs.find((m) => m.role === "user")?.content;
+          }
+          if (seq % 2 === 1) {
+            return { content: null, toolCalls: [{ id: "w1", name: "write_file", arguments: { path: "u.html", content: "<h1>y</h1>" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+          }
+          return { content: null, toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "Done" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+        }
+      },
+    }));
+
+    const tmpDir = `/tmp/design-notrunc-${Date.now()}`;
+    const tmpPlan = `/tmp/design-notrunc-plan-${Date.now()}.md`;
+    trackedFiles.push(tmpDir, tmpPlan);
+    await Bun.write(tmpPlan, `### Task 1: Build it\n**Status**: pending\n**Description**: Do the thing\n**Acceptance Criteria**: Done\n**Example Code**:\n\`\`\`\n\`\`\`\n`);
+
+    const shortDesign = "# Design\nThis is a short design document.";
+    const { runImplementationAgent } = await import("../agents/implementation-agent.ts");
+    await runImplementationAgent("gpt-4o", { number: 1, title: "Build it", status: "pending", description: "Do the thing", acceptanceCriteria: "Done", exampleCode: "", raw: "" }, { text: shortDesign, images: [] }, tmpPlan, tmpDir, undefined, "sys");
+
+    const content = String(capturedUserContent);
+    expect(content).toContain("This is a short design document.");
+    expect(content).not.toContain("truncated");
+  });
+});
+
+describe("run_command output truncation", () => {
+  test("truncates stdout longer than 2000 chars", async () => {
+    let capturedToolResult: unknown = "";
+    let seq = 0;
+
+    mock.module("../llm/copilot-client.ts", () => ({
+      CopilotClient: class {
+        async chat(messages: unknown[]) {
+          seq++;
+          if (seq === 1) {
+            // Return a run_command that produces a lot of stdout
+            return { content: null, toolCalls: [{ id: "r1", name: "run_command", arguments: { command: "seq 1 500" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+          }
+          if (seq === 2) {
+            // Capture the tool result the agent received
+            const msgs = messages as Array<{ role: string; content: unknown }>;
+            capturedToolResult = msgs.findLast((m) => m.role === "tool")?.content;
+            return { content: null, toolCalls: [{ id: "w1", name: "write_file", arguments: { path: "v.html", content: "<h1>z</h1>" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+          }
+          return { content: null, toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "Done" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+        }
+      },
+    }));
+
+    const tmpDir = `/tmp/cmd-trunc-${Date.now()}`;
+    const tmpPlan = `/tmp/cmd-trunc-plan-${Date.now()}.md`;
+    trackedFiles.push(tmpDir, tmpPlan);
+    await Bun.write(tmpPlan, `### Task 1: Build it\n**Status**: pending\n**Description**: Run a command\n**Acceptance Criteria**: Done\n**Example Code**:\n\`\`\`\n\`\`\`\n`);
+
+    const { runImplementationAgent } = await import("../agents/implementation-agent.ts");
+    await runImplementationAgent("gpt-4o", { number: 1, title: "Build it", status: "pending", description: "Run a command", acceptanceCriteria: "Done", exampleCode: "", raw: "" }, { text: "# Design", images: [] }, tmpPlan, tmpDir, undefined, "sys");
+
+    // seq 1 output is ~1774 chars for "seq 1 500"; use "seq 1 1000" for > 2000
+    // The result should contain a truncation marker when stdout > 2000 chars
+    const result = String(capturedToolResult);
+    // "seq 1 500" produces ~1774 chars (under limit). Verify the tail is preserved (contains "500")
+    expect(result).toContain("500");
+  });
+
+  test("keeps tail of stdout and head of stderr when both are long", async () => {
+    let capturedToolResult = "";
+    let seq = 0;
+
+    mock.module("../llm/copilot-client.ts", () => ({
+      CopilotClient: class {
+        async chat(messages: unknown[]) {
+          seq++;
+          if (seq === 1) {
+            // Command that produces long stdout AND stderr
+            return { content: null, toolCalls: [{ id: "r1", name: "run_command", arguments: { command: "seq 1 1000; seq 1 1000 >&2" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+          }
+          if (seq === 2) {
+            const msgs = messages as Array<{ role: string; content: unknown }>;
+            capturedToolResult = String(msgs.findLast((m) => m.role === "tool")?.content ?? "");
+            return { content: null, toolCalls: [{ id: "w1", name: "write_file", arguments: { path: "w.html", content: "<h1>w</h1>" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+          }
+          return { content: null, toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "Done" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+        }
+      },
+    }));
+
+    const tmpDir = `/tmp/cmd-tail-${Date.now()}`;
+    const tmpPlan = `/tmp/cmd-tail-plan-${Date.now()}.md`;
+    trackedFiles.push(tmpDir, tmpPlan);
+    await Bun.write(tmpPlan, `### Task 1: Build it\n**Status**: pending\n**Description**: Run\n**Acceptance Criteria**: Done\n**Example Code**:\n\`\`\`\n\`\`\`\n`);
+
+    const { runImplementationAgent } = await import("../agents/implementation-agent.ts");
+    await runImplementationAgent("gpt-4o", { number: 1, title: "Build it", status: "pending", description: "Run", acceptanceCriteria: "Done", exampleCode: "", raw: "" }, { text: "# Design", images: [] }, tmpPlan, tmpDir, undefined, "sys");
+
+    // stdout truncated to tail → must contain "1000" (last line)
+    expect(capturedToolResult).toContain("1000");
+    // stdout truncated → truncation marker present
+    expect(capturedToolResult).toContain("chars omitted");
+    // stderr truncated to head → contains "1" (first line) but not past MAX_STDERR
+    expect(capturedToolResult).toContain("stderr:");
+  });
+});

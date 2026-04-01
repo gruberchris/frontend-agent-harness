@@ -107,10 +107,17 @@ export async function runImplementationCoordinator(
 
     const projectContext = await buildProjectContext(planFile, outputDir, memoryFile);
 
+    // Send design images only for the first task or visually-focused tasks.
+    // Resending large base64 images on every task wastes significant tokens.
+    const isUiTask = /layout|style|css|ui|visual|design|component|theme|color|icon/i.test(nextTask.title);
+    const taskDesign: DesignContent = (tasksCompleted === 0 || isUiTask)
+      ? design
+      : { ...design, images: [] };
+
     const result = await runImplementationAgent(
       model,
       nextTask,
-      design,
+      taskDesign,
       planFile,
       outputDir,
       projectContext,

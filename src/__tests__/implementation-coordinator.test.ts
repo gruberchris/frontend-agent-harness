@@ -168,3 +168,81 @@ describe("runImplementationCoordinator", () => {
     expect(result.tasksCompleted).toBe(0);
   });
 });
+
+describe("design image stripping", () => {
+  const fakeImage = { altText: "screenshot", data: "ZmFrZWRhdGE=", mimeType: "image/png" as const };
+
+  function makePlan(task1Title: string, task2Title: string) {
+    return `## Tech Stack\n- **Framework**: React\n\n---\n\n### Task 1: ${task1Title}\n**Status**: pending\n**Description**: Do it\n**Acceptance Criteria**: Done\n**Example Code**:\n\`\`\`\n\`\`\`\n\n---\n\n### Task 2: ${task2Title}\n**Status**: pending\n**Description**: Do it\n**Acceptance Criteria**: Done\n**Example Code**:\n\`\`\`\n\`\`\`\n`;
+  }
+
+  test("images are sent for task 1 but stripped for subsequent non-UI tasks", async () => {
+    const contentTypes: ("array" | "string")[] = [];
+    let seq = 0;
+
+    mock.module("../llm/copilot-client.ts", () => ({
+      CopilotClient: class {
+        async chat(messages: unknown[]) {
+          seq++;
+          // Capture user message content on the first LLM call per task (odd seq = first call)
+          if (seq % 2 === 1) {
+            const msgs = messages as Array<{ role: string; content: unknown }>;
+            const userMsg = msgs.find((m) => m.role === "user");
+            contentTypes.push(Array.isArray(userMsg?.content) ? "array" : "string");
+          }
+          if (seq % 2 === 1) {
+            return { content: null, toolCalls: [{ id: "w1", name: "write_file", arguments: { path: "f.html", content: "<h1>x</h1>" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+          }
+          return { content: null, toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "done" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+        }
+      },
+    }));
+
+    const tmpPlan = `/tmp/img-strip-plan-${Date.now()}.md`;
+    const tmpOutput = `/tmp/img-strip-out-${Date.now()}`;
+    const tmpMemory = `/tmp/img-strip-mem-${Date.now()}.md`;
+    trackedFiles.push(tmpPlan, tmpOutput, tmpMemory);
+    await Bun.write(tmpPlan, makePlan("Project Scaffold", "Add routing"));
+
+    const { runImplementationCoordinator } = await import("../agents/implementation-coordinator.ts");
+    await runImplementationCoordinator("gpt-4o", { text: "# Design", images: [fakeImage] }, tmpPlan, tmpMemory, tmpOutput, "sys");
+
+    expect(contentTypes[0]).toBe("array");  // task 1: images included
+    expect(contentTypes[1]).toBe("string"); // task 2: images stripped
+  });
+
+  test("images are preserved for UI-related tasks beyond task 1", async () => {
+    const contentTypes: ("array" | "string")[] = [];
+    let seq = 0;
+
+    mock.module("../llm/copilot-client.ts", () => ({
+      CopilotClient: class {
+        async chat(messages: unknown[]) {
+          seq++;
+          if (seq % 2 === 1) {
+            const msgs = messages as Array<{ role: string; content: unknown }>;
+            const userMsg = msgs.find((m) => m.role === "user");
+            contentTypes.push(Array.isArray(userMsg?.content) ? "array" : "string");
+          }
+          if (seq % 2 === 1) {
+            return { content: null, toolCalls: [{ id: "w1", name: "write_file", arguments: { path: "g.html", content: "<h1>y</h1>" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+          }
+          return { content: null, toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "done" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+        }
+      },
+    }));
+
+    const tmpPlan = `/tmp/img-ui-plan-${Date.now()}.md`;
+    const tmpOutput = `/tmp/img-ui-out-${Date.now()}`;
+    const tmpMemory = `/tmp/img-ui-mem-${Date.now()}.md`;
+    trackedFiles.push(tmpPlan, tmpOutput, tmpMemory);
+    // Task 2 has "Style" in title → matches the UI regex
+    await Bun.write(tmpPlan, makePlan("Project Scaffold", "Style the UI components"));
+
+    const { runImplementationCoordinator } = await import("../agents/implementation-coordinator.ts");
+    await runImplementationCoordinator("gpt-4o", { text: "# Design", images: [fakeImage] }, tmpPlan, tmpMemory, tmpOutput, "sys");
+
+    expect(contentTypes[0]).toBe("array"); // task 1: images included
+    expect(contentTypes[1]).toBe("array"); // task 2: "Style" → UI task, images kept
+  });
+});

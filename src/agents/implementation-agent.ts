@@ -169,12 +169,19 @@ export async function runImplementationAgent(
     ? `## Project Context (pre-injected — use this to understand the current state)\n\n${projectContext}\n\n---\n\n`
     : "";
 
+  // Cap design text per task — the plan header already captures tech stack/conventions,
+  // so repeating the full design doc on every task wastes tokens.
+  const DESIGN_TEXT_CAP = 2_000;
+  const designContext = design.text.length > DESIGN_TEXT_CAP
+    ? design.text.slice(0, DESIGN_TEXT_CAP) + `\n\n...(design text truncated at ${DESIGN_TEXT_CAP} chars — full spec captured in plan header above)`
+    : design.text;
+
   const messages: LLMMessage[] = [
     { role: "system", content: systemPrompt },
     {
       role: "user",
       content: buildMessageContent(
-        `${contextSection}Implement the following task:\n\n### Task ${task.number}: ${task.title}\n**Description**: ${task.description}\n**Acceptance Criteria**: ${task.acceptanceCriteria}\n**Example Code**:\n${task.exampleCode}\n\n---\n\nDesign context:\n${design.text}\n\nBegin implementation now. The project context above shows the current state — ensure your changes are consistent with existing files and the declared tech stack.`,
+        `${contextSection}Implement the following task:\n\n### Task ${task.number}: ${task.title}\n**Description**: ${task.description}\n**Acceptance Criteria**: ${task.acceptanceCriteria}\n**Example Code**:\n${task.exampleCode}\n\n---\n\nDesign context:\n${designContext}\n\nBegin implementation now. The project context above shows the current state — ensure your changes are consistent with existing files and the declared tech stack.`,
         design.images,
       ),
     },
@@ -473,10 +480,20 @@ async function executeTool(
           new Response(proc.stderr).text(),
           proc.exited,
         ]);
+        // Stdout: keep the tail (success messages appear at end, e.g. npm install summary).
+        // Stderr: keep the head (first errors are most actionable).
+        const MAX_STDOUT = 2_000;
+        const MAX_STDERR = 1_500;
+        const truncStdout = stdout.length > MAX_STDOUT
+          ? `...(${stdout.length - MAX_STDOUT} chars omitted)\n` + stdout.slice(-MAX_STDOUT)
+          : stdout;
+        const truncStderr = stderr.length > MAX_STDERR
+          ? stderr.slice(0, MAX_STDERR) + `\n...(${stderr.length - MAX_STDERR} chars omitted)`
+          : stderr;
         return [
           `Exit code: ${exitCode}`,
-          stdout ? `stdout:\n${stdout}` : "",
-          stderr ? `stderr:\n${stderr}` : "",
+          truncStdout ? `stdout:\n${truncStdout}` : "",
+          truncStderr ? `stderr:\n${truncStderr}` : "",
         ]
           .filter(Boolean)
           .join("\n");

@@ -6,8 +6,31 @@ import { printReport, type AgentStepStats, type PipelineReport } from "./reporti
 import { addTokenUsage, emptyTokenUsage } from "../llm/types.ts";
 import type { HarnessConfig } from "../config.ts";
 import chalk from "chalk";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 
 const activeHandles: Set<{ stop: () => Promise<void> }> = new Set();
+
+async function clearDirectory(dir: string): Promise<void> {
+  const entries = await fs.readdir(dir).catch(() => [] as string[]);
+  await Promise.all(
+    entries.map((e) => fs.rm(path.join(dir, e), { recursive: true, force: true })),
+  );
+}
+
+async function readFileTree(dir: string, depth = 0, maxDepth = 3): Promise<string> {
+  const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
+  const lines: string[] = [];
+  const indent = "  ".repeat(depth);
+  for (const e of entries) {
+    if (e.name === "node_modules" || e.name === ".git") continue;
+    lines.push(`${indent}${e.isDirectory() ? e.name + "/" : e.name}`);
+    if (e.isDirectory() && depth < maxDepth) {
+      lines.push(await readFileTree(path.join(dir, e.name), depth + 1, maxDepth));
+    }
+  }
+  return lines.filter(Boolean).join("\n");
+}
 
 async function cleanup() {
   for (const handle of activeHandles) {
@@ -160,6 +183,16 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
     // ── Re-run Task Agent with updated design.md ─────────────────────────────
     console.log(chalk.bold(`\n📋 Re-running Task Agent with updated design.md...`));
     const updatedDesign = await Bun.file(config.designFile).text();
+
+    let existingFileTree: string | undefined;
+    if (config.cleanOutputOnRetry) {
+      console.log(chalk.dim(`  Clearing output directory for clean rebuild...`));
+      await clearDirectory(path.resolve(config.outputDir));
+      await Bun.write(config.planFile, "");
+    } else {
+      existingFileTree = await readFileTree(path.resolve(config.outputDir));
+    }
+
     const reTaskResult = await runTaskAgent(
       config.agents.taskAgent.model,
       updatedDesign,
@@ -168,6 +201,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
       config.agents.taskAgent.systemPrompt,
       config.agents.taskAgent.reasoningEffort,
       config.agents.taskAgent.maxTokens,
+      existingFileTree,
     );
     taskAgentUsage = addTokenUsage(taskAgentUsage, reTaskResult.usage);
     taskAgentCalls++;

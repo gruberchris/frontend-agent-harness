@@ -12,6 +12,7 @@ const AgentConfigSchema = z.object({
 export const HarnessConfigSchema = z.object({
   maxEvaluatorIterations: z.number().int().min(1),
   maxToolCallIterations: z.number().int().min(1),
+  cleanOutputOnRetry: z.boolean(),
   outputDir: z.string(),
   designFile: z.string(),
   planFile: z.string(),
@@ -37,6 +38,7 @@ export type HarnessConfig = z.infer<typeof HarnessConfigSchema>;
 const DEFAULTS: HarnessConfig = {
   maxEvaluatorIterations: 3,
   maxToolCallIterations: 20,
+  cleanOutputOnRetry: false,
   outputDir: "./output",
   designFile: "./design.md",
   planFile: "./plan.md",
@@ -161,6 +163,9 @@ export async function loadConfig(configPath: string): Promise<HarnessConfig> {
     }),
     ...(raw["maxToolCallIterations"] !== undefined && {
       maxToolCallIterations: raw["maxToolCallIterations"] as number,
+    }),
+    ...(raw["cleanOutputOnRetry"] !== undefined && {
+      cleanOutputOnRetry: raw["cleanOutputOnRetry"] as boolean,
     }),
     ...(raw["outputDir"] !== undefined && { outputDir: raw["outputDir"] as string }),
     ...(raw["designFile"] !== undefined && { designFile: raw["designFile"] as string }),

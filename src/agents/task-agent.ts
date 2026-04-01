@@ -15,6 +15,7 @@ export async function runTaskAgent(
   systemPrompt: string,
   reasoningEffort?: string,
   maxTokens?: number,
+  existingFileTree?: string,
 ): Promise<TaskAgentResult> {
   const client = new CopilotClient(model, reasoningEffort, maxTokens);
   const usage = emptyTokenUsage();
@@ -35,11 +36,22 @@ ${existingMemory || "No specific evaluator memory found yet."}
 `;
   }
 
+  let fileContextSection = "";
+  if (existingFileTree) {
+    fileContextSection = `\n\n### EXISTING OUTPUT FILES
+The following files already exist from the previous iteration. Generate TARGETED correction tasks only — fix the reported issues without rebuilding things that are already working. Tasks should modify existing files rather than recreating them from scratch.
+
+\`\`\`
+${existingFileTree}
+\`\`\`
+`;
+  }
+
   const messages: LLMMessage[] = [
     { role: "system", content: systemPrompt },
     {
       role: "user",
-      content: `Please create an implementation plan for the following design document:\n\n---\n${designContent}\n---${feedbackSection}\n\nGenerate the complete task list now. Ensure you address any issues mentioned in the feedback section above.`,
+      content: `Please create an implementation plan for the following design document:\n\n---\n${designContent}\n---${feedbackSection}${fileContextSection}\n\nGenerate the complete task list now. Ensure you address any issues mentioned in the feedback section above.`,
     },
   ];
 

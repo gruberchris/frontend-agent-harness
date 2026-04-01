@@ -188,6 +188,15 @@ export async function runImplementationAgent(
 
   // Tool-calling loop
   for (let i = 0; i < maxToolCallIterations; i++) {
+    // Warn agent when approaching the iteration limit
+    const iterationsLeft = maxToolCallIterations - i;
+    if (iterationsLeft === Math.ceil(maxToolCallIterations * 0.2)) {
+      messages.push({
+        role: "user",
+        content: `⚠️ URGENT: Only ${iterationsLeft} iterations remaining. If all required files are written and tests pass, call mark_task_complete NOW. Do not start new sub-tasks.`,
+      });
+    }
+
     // Trim conversation history if it gets too large (keep system + first user + last N turns)
     if (messages.length > 32) {
       const system = messages[0]!;
@@ -210,8 +219,16 @@ export async function runImplementationAgent(
 
     if (response.finishReason === "stop" || response.toolCalls.length === 0) {
       // No more tool calls — agent decided to stop without completing
-      summary = response.content ?? "Task completed";
-      break;
+      const msg = response.content?.trim();
+      const iterationsLeft = maxToolCallIterations - i - 1;
+      console.log(`    ⚠  Agent returned stop with no tool calls (iteration ${i + 1}/${maxToolCallIterations})`);
+      if (msg) console.log(`    ↳ "${msg.slice(0, 200)}"`);
+      // Nudge the model to continue rather than giving up
+      messages.push({
+        role: "user",
+        content: `WARNING: You responded with text but no tool calls — that is not allowed. You have ${iterationsLeft} iteration(s) remaining.\n\nDo NOT narrate or describe. Respond with tool calls ONLY:\n- If the task is fully done (files written, tests pass), call mark_task_complete NOW.\n- If there is more to do, call the next tool immediately.`,
+      });
+      continue;
     }
 
     // Execute ALL tool calls in this batch before checking for completion
@@ -243,15 +260,21 @@ export async function runImplementationAgent(
     if (!interceptedLoop) {
       for (const toolCall of response.toolCalls) {
         if (toolCall.name === "mark_task_complete") {
-          // Guard: refuse completion if no files have been written yet
+          // Guard: refuse completion if no work has been done at all (no files exist in output dir)
           if (filesWritten === 0) {
-            messages.push({
-              role: "tool",
-              content: "Error: Cannot mark task complete — no files have been written yet. You must call write_file to create or update files before marking the task complete.",
-              toolCallId: toolCall.id,
-            });
-            console.log(`    ⚠  Refused early mark_task_complete (no files written yet)`);
-            continue;
+            const entries = await fs.readdir(absOutputDir, { recursive: true }).catch(() => [] as string[]);
+            const hasAnyFile = (entries as Array<string | fs.Dirent>).some((e) =>
+              typeof e === "string" ? !e.endsWith("/") : (e as fs.Dirent).isFile(),
+            );
+            if (!hasAnyFile) {
+              messages.push({
+                role: "tool",
+                content: "Error: Cannot mark task complete — no files exist in the output directory yet. Create files with write_file or run a scaffold command first.",
+                toolCallId: toolCall.id,
+              });
+              console.log(`    ⚠  Refused early mark_task_complete (output dir is empty)`);
+              continue;
+            }
           }
           completionCall = {
             id: toolCall.id,
@@ -271,6 +294,11 @@ export async function runImplementationAgent(
             console.log(`    📝 updated ${toolCall.arguments["path"]}`);
           } else if (toolCall.name === "run_command") {
             console.log(`    $ ${toolCall.arguments["command"]}`);
+          } else {
+            console.log(`    🔧 ${toolCall.name}(${JSON.stringify(toolCall.arguments).slice(0, 80)})`);
+          }
+          if (result.startsWith("Error")) {
+            console.log(`    ✗  ${result.slice(0, 200)}`);
           }
           messages.push({
             role: "tool",
@@ -329,21 +357,6 @@ async function executeTool(
         }
         
         await Bun.write(filePath, String(args["content"] ?? ""));
-        
-        if (filePath.endsWith(".ts") || filePath.endsWith(".tsx")) {
-          const proc = Bun.spawn(["bun", "build", filePath, "--no-bundle"], { stdout: "pipe", stderr: "pipe" });
-          const exitCode = await proc.exited;
-          if (exitCode !== 0) {
-            const stderr = await new Response(proc.stderr).text();
-            const backup = fileBackupCache.get(relPath) ?? "";
-            if (backup) {
-              await Bun.write(filePath, backup);
-            } else {
-              await fs.unlink(filePath);
-            }
-            return `Error: Syntax error detected. File write reverted.\n${stderr}`;
-          }
-        }
         return `File written: ${relPath}`;
       }
 
@@ -364,16 +377,6 @@ async function executeTool(
         fileBackupCache.set(relPath, content);
         const newContent = content.replace(oldStr, newStr);
         await Bun.write(filePath, newContent);
-        
-        if (filePath.endsWith(".ts") || filePath.endsWith(".tsx")) {
-          const proc = Bun.spawn(["bun", "build", filePath, "--no-bundle"], { stdout: "pipe", stderr: "pipe" });
-          const exitCode = await proc.exited;
-          if (exitCode !== 0) {
-            const stderr = await new Response(proc.stderr).text();
-            await Bun.write(filePath, content);
-            return `Error: Syntax error detected after replacement. File edit reverted.\n${stderr}`;
-          }
-        }
         return `Text replaced in: ${relPath}`;
       }
 

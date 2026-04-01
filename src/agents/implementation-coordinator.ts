@@ -1,5 +1,5 @@
 import { addTokenUsage, emptyTokenUsage, type TokenUsage } from "../llm/types.ts";
-import { getNextPendingTask, readPlanHeader } from "../plan/plan-parser.ts";
+import { getNextPendingTask, readPlanHeader, readTasks, appendTasks } from "../plan/plan-parser.ts";
 import { runImplementationAgent } from "./implementation-agent.ts";
 import { type DesignContent } from "../design/design-loader.ts";
 import { findBrokenReferences } from "../validation/reference-checker.ts";
@@ -137,8 +137,8 @@ export async function runImplementationCoordinator(
 
   // ── Post-implementation reference validation & repair ──────────────────────
   // Scan ALL generated files for broken local references (HTML src/href,
-  // TS/JS imports, CSS @import). If any are found, run one targeted repair
-  // task so the build doesn't fail on a trivial missing-file error.
+  // TS/JS imports, CSS @import). If any are found, append a repair task to
+  // plan.md and run the implementation agent so status updates work correctly.
   const absOutputDir = path.resolve(outputDir);
   const brokenRefs = await findBrokenReferences(absOutputDir);
   if (brokenRefs.length > 0) {
@@ -148,8 +148,12 @@ export async function runImplementationCoordinator(
     console.log(chalk.yellow(`\n⚠️  Found ${brokenRefs.length} broken reference(s) — running repair pass...`));
     brokenRefs.forEach((r) => console.log(chalk.dim(`    missing: ${r.missingFile} ← ${r.inFile}`)));
 
+    // Derive task number from actual plan so we don't conflict with existing tasks
+    const existingTasks = await readTasks(planFile);
+    const repairNumber = existingTasks.reduce((max, t) => Math.max(max, t.number), 0) + 1;
+
     const repairTask: PlanTask = {
-      number: tasksCompleted + 1,
+      number: repairNumber,
       title: "Repair: Create missing referenced files",
       status: "pending",
       description:
@@ -159,6 +163,19 @@ export async function runImplementationCoordinator(
       exampleCode: "",
       raw: "",
     };
+
+    // Append repair task to plan.md so updateTaskStatus can find it
+    const repairBlock = [
+      `### Task ${repairTask.number}: ${repairTask.title}`,
+      `**Status**: pending`,
+      `**Description**: ${repairTask.description}`,
+      `**Acceptance Criteria**: ${repairTask.acceptanceCriteria}`,
+      `**Example Code**:`,
+      "```",
+      "",
+      "```",
+    ].join("\n");
+    await appendTasks(planFile, repairBlock);
 
     const repairContext = await buildProjectContext(planFile, outputDir, memoryFile);
     const repairResult = await runImplementationAgent(

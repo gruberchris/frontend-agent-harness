@@ -243,3 +243,207 @@ describe("file operations in output dir", () => {
     expect(content).toBe("hello world");
   });
 });
+
+describe("replace_text tool", () => {
+  function makeTask() {
+    return {
+      number: 1,
+      title: "Edit file",
+      status: "pending" as const,
+      description: "Patch a file",
+      acceptanceCriteria: "File updated",
+      exampleCode: "",
+      raw: "",
+    };
+  }
+
+  test("replaces exact text in an existing file", async () => {
+    const tmpDir = `/tmp/replace-text-${Date.now()}`;
+    const tmpPlan = `/tmp/replace-text-plan-${Date.now()}.md`;
+    trackedFiles.push(tmpDir, tmpPlan);
+    await fs.mkdir(tmpDir, { recursive: true });
+    await Bun.write(`${tmpDir}/app.tsx`, "const greeting = 'hello';\n");
+    await Bun.write(tmpPlan, `### Task 1: Edit file\n**Status**: pending\n**Description**: Patch\n**Acceptance Criteria**: Done\n**Example Code**:\n\`\`\`\n\`\`\`\n`);
+
+    let seq = 0;
+    mock.module("../llm/copilot-client.ts", () => ({
+      CopilotClient: class {
+        constructor(_model: string) {}
+        async chat() {
+          seq++;
+          if (seq === 1) {
+            return {
+              content: null,
+              toolCalls: [{ id: "r1", name: "replace_text", arguments: { path: "app.tsx", old_string: "hello", new_string: "world" } }],
+              usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+              finishReason: "tool_calls" as const,
+            };
+          }
+          return {
+            content: null,
+            toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "Patched" } }],
+            usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+            finishReason: "tool_calls" as const,
+          };
+        }
+      },
+    }));
+
+    const { runImplementationAgent } = await import("../agents/implementation-agent.ts");
+    const result = await runImplementationAgent("gpt-4o", makeTask(), { text: "# Design", images: [] }, tmpPlan, tmpDir, undefined, "sys");
+
+    expect(result.summary).toBe("Patched");
+    const content = await Bun.file(`${tmpDir}/app.tsx`).text();
+    expect(content).toBe("const greeting = 'world';\n");
+  });
+
+  test("returns error message when old_string is not found in file", async () => {
+    const tmpDir = `/tmp/replace-err-${Date.now()}`;
+    const tmpPlan = `/tmp/replace-err-plan-${Date.now()}.md`;
+    trackedFiles.push(tmpDir, tmpPlan);
+    await fs.mkdir(tmpDir, { recursive: true });
+    await Bun.write(`${tmpDir}/app.tsx`, "const x = 1;\n");
+    await Bun.write(tmpPlan, `### Task 1: Edit file\n**Status**: pending\n**Description**: Patch\n**Acceptance Criteria**: Done\n**Example Code**:\n\`\`\`\n\`\`\`\n`);
+
+    let seq = 0;
+    let capturedToolResult = "";
+    mock.module("../llm/copilot-client.ts", () => ({
+      CopilotClient: class {
+        constructor(_model: string) {}
+        async chat(messages: unknown[]) {
+          seq++;
+          if (seq === 1) {
+            return {
+              content: null,
+              toolCalls: [{ id: "r1", name: "replace_text", arguments: { path: "app.tsx", old_string: "NOT_IN_FILE", new_string: "world" } }],
+              usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+              finishReason: "tool_calls" as const,
+            };
+          }
+          // Capture the tool result message the agent received
+          const msgs = messages as Array<{ role: string; content: string }>;
+          const toolMsg = msgs.findLast((m) => m.role === "tool");
+          if (toolMsg) capturedToolResult = toolMsg.content;
+          return {
+            content: null,
+            toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "Done" } }],
+            usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+            finishReason: "tool_calls" as const,
+          };
+        }
+      },
+    }));
+
+    const { runImplementationAgent } = await import("../agents/implementation-agent.ts");
+    await runImplementationAgent("gpt-4o", makeTask(), { text: "# Design", images: [] }, tmpPlan, tmpDir, undefined, "sys");
+
+    expect(capturedToolResult).toContain("Error");
+    expect(capturedToolResult).toContain("old_string");
+    // File must be unchanged
+    const content = await Bun.file(`${tmpDir}/app.tsx`).text();
+    expect(content).toBe("const x = 1;\n");
+  });
+});
+
+describe("undo_edit tool", () => {
+  function makeTask() {
+    return {
+      number: 1,
+      title: "Undo test",
+      status: "pending" as const,
+      description: "Test undo",
+      acceptanceCriteria: "Reverted",
+      exampleCode: "",
+      raw: "",
+    };
+  }
+
+  test("reverts a file to state before the last write_file", async () => {
+    const tmpDir = `/tmp/undo-write-${Date.now()}`;
+    const tmpPlan = `/tmp/undo-write-plan-${Date.now()}.md`;
+    trackedFiles.push(tmpDir, tmpPlan);
+    await fs.mkdir(tmpDir, { recursive: true });
+    await Bun.write(`${tmpDir}/app.tsx`, "original content\n");
+    await Bun.write(tmpPlan, `### Task 1: Undo test\n**Status**: pending\n**Description**: Test\n**Acceptance Criteria**: Done\n**Example Code**:\n\`\`\`\n\`\`\`\n`);
+
+    let seq = 0;
+    mock.module("../llm/copilot-client.ts", () => ({
+      CopilotClient: class {
+        constructor(_model: string) {}
+        async chat() {
+          seq++;
+          if (seq === 1) return { content: null, toolCalls: [{ id: "w1", name: "write_file", arguments: { path: "app.tsx", content: "new content\n" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+          if (seq === 2) return { content: null, toolCalls: [{ id: "u1", name: "undo_edit", arguments: { path: "app.tsx" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+          return { content: null, toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "Reverted" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+        }
+      },
+    }));
+
+    const { runImplementationAgent } = await import("../agents/implementation-agent.ts");
+    const result = await runImplementationAgent("gpt-4o", makeTask(), { text: "# Design", images: [] }, tmpPlan, tmpDir, undefined, "sys");
+
+    expect(result.summary).toBe("Reverted");
+    const content = await Bun.file(`${tmpDir}/app.tsx`).text();
+    expect(content).toBe("original content\n");
+  });
+
+  test("reverts a file to state before the last replace_text", async () => {
+    const tmpDir = `/tmp/undo-replace-${Date.now()}`;
+    const tmpPlan = `/tmp/undo-replace-plan-${Date.now()}.md`;
+    trackedFiles.push(tmpDir, tmpPlan);
+    await fs.mkdir(tmpDir, { recursive: true });
+    await Bun.write(`${tmpDir}/app.tsx`, "const x = 'original';\n");
+    await Bun.write(tmpPlan, `### Task 1: Undo test\n**Status**: pending\n**Description**: Test\n**Acceptance Criteria**: Done\n**Example Code**:\n\`\`\`\n\`\`\`\n`);
+
+    let seq = 0;
+    mock.module("../llm/copilot-client.ts", () => ({
+      CopilotClient: class {
+        constructor(_model: string) {}
+        async chat() {
+          seq++;
+          if (seq === 1) return { content: null, toolCalls: [{ id: "r1", name: "replace_text", arguments: { path: "app.tsx", old_string: "original", new_string: "modified" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+          if (seq === 2) return { content: null, toolCalls: [{ id: "u1", name: "undo_edit", arguments: { path: "app.tsx" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+          return { content: null, toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "Reverted" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+        }
+      },
+    }));
+
+    const { runImplementationAgent } = await import("../agents/implementation-agent.ts");
+    await runImplementationAgent("gpt-4o", makeTask(), { text: "# Design", images: [] }, tmpPlan, tmpDir, undefined, "sys");
+
+    const content = await Bun.file(`${tmpDir}/app.tsx`).text();
+    expect(content).toBe("const x = 'original';\n");
+  });
+
+  test("returns error when no backup exists for the file", async () => {
+    const tmpDir = `/tmp/undo-nobak-${Date.now()}`;
+    const tmpPlan = `/tmp/undo-nobak-plan-${Date.now()}.md`;
+    trackedFiles.push(tmpDir, tmpPlan);
+    await fs.mkdir(tmpDir, { recursive: true });
+    // Use a unique filename not touched in any other test to avoid fileBackupCache leakage
+    await Bun.write(`${tmpDir}/never-written-before.tsx`, "some content\n");
+    await Bun.write(tmpPlan, `### Task 1: Undo test\n**Status**: pending\n**Description**: Test\n**Acceptance Criteria**: Done\n**Example Code**:\n\`\`\`\n\`\`\`\n`);
+
+    let seq = 0;
+    let capturedToolResult = "";
+    mock.module("../llm/copilot-client.ts", () => ({
+      CopilotClient: class {
+        constructor(_model: string) {}
+        async chat(messages: unknown[]) {
+          seq++;
+          if (seq === 1) return { content: null, toolCalls: [{ id: "u1", name: "undo_edit", arguments: { path: "never-written-before.tsx" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+          const msgs = messages as Array<{ role: string; content: string }>;
+          const toolMsg = msgs.findLast((m) => m.role === "tool");
+          if (toolMsg) capturedToolResult = toolMsg.content;
+          return { content: null, toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "Done" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+        }
+      },
+    }));
+
+    const { runImplementationAgent } = await import("../agents/implementation-agent.ts");
+    await runImplementationAgent("gpt-4o", makeTask(), { text: "# Design", images: [] }, tmpPlan, tmpDir, undefined, "sys");
+
+    expect(capturedToolResult).toContain("Error");
+    expect(capturedToolResult).toContain("No backup");
+  });
+});

@@ -37,7 +37,7 @@ const DECISION_TOOLS: ToolDefinition[] = [
   },
   {
     name: "decide_needs_work",
-    description: "The application has significant discrepancies from the design. List what needs fixing.",
+    description: "The application has significant discrepancies from the design. Call this ONLY after you have explored ALL tabs, states, and features. List what needs fixing.",
     parameters: {
       type: "object",
       properties: {
@@ -47,7 +47,7 @@ const DECISION_TOOLS: ToolDefinition[] = [
         },
         corrections: {
           type: "string",
-          description: "Specific corrections needed as additional design notes (will be appended to design.md)",
+          description: "Specific corrections needed, written as additional design notes. These will be saved to memory.md as lessons learned for the next iteration.",
         },
       },
       required: ["explanation", "corrections"],
@@ -118,7 +118,18 @@ Use the available Playwright tools to navigate to the application, explore its f
     });
 
     if (response.finishReason === "stop" || response.toolCalls.length === 0) {
-      // Agent stopped without making a decision — treat as needs work
+      const iterationsLeft = 30 - i - 1;
+      const msg = response.content?.trim();
+      if (msg) console.log(`    ↳ Evaluator narrated: "${msg.slice(0, 200)}"`);
+      if (iterationsLeft > 0) {
+        // Nudge: don't give up, keep exploring
+        messages.push({
+          role: "user",
+          content: `You responded with text but no tool calls. Do NOT call decide_needs_work just because you want to explore more — use Playwright to do it NOW. You have ${iterationsLeft} steps left.\n\nIf you have genuinely finished evaluating ALL tabs and features, call decide_pass or decide_needs_work immediately. Otherwise, use a Playwright tool to continue exploring.`,
+        });
+        continue;
+      }
+      // Out of steps — treat as inconclusive
       explanation = response.content ?? "Evaluation inconclusive";
       break;
     }

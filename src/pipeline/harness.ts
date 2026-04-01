@@ -180,8 +180,8 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
       break;
     }
 
-    // ── Re-run Task Agent with updated design.md ─────────────────────────────
-    console.log(chalk.bold(`\n📋 Re-running Task Agent with updated design.md...`));
+    // ── Re-run Task Agent with evaluator feedback ─────────────────────────────
+    console.log(chalk.bold(`\n📋 Re-running Task Agent with evaluator feedback (memory.md updated)...`));
     const updatedDesign = await Bun.file(config.designFile).text();
 
     let existingFileTree: string | undefined;

@@ -221,8 +221,8 @@ export async function runImplementationAgent(
       // No more tool calls — agent decided to stop without completing
       const msg = response.content?.trim();
       const iterationsLeft = maxToolCallIterations - i - 1;
-      console.log(`    ⚠  Agent returned stop with no tool calls (iteration ${i + 1}/${maxToolCallIterations})`);
-      if (msg) console.log(`    ↳ "${msg.slice(0, 200)}"`);
+      console.log(`    ⚠️  Agent returned stop with no tool calls (iteration ${i + 1}/${maxToolCallIterations})`);
+      if (msg) console.log(`    💬 "${msg.slice(0, 200)}"`);
       // Nudge the model to continue rather than giving up
       messages.push({
         role: "user",
@@ -254,7 +254,7 @@ export async function runImplementationAgent(
         });
       }
       interceptedLoop = true;
-      console.log(`    ⚠  Intercepted tool call loop`);
+      console.log(`    ⚠️  Intercepted tool call loop`);
     }
 
     if (!interceptedLoop) {
@@ -272,7 +272,7 @@ export async function runImplementationAgent(
                 content: "Error: Cannot mark task complete — no files exist in the output directory yet. Create files with write_file or run a scaffold command first.",
                 toolCallId: toolCall.id,
               });
-              console.log(`    ⚠  Refused early mark_task_complete (output dir is empty)`);
+              console.log(`    ⚠️  Refused early mark_task_complete (output dir is empty)`);
               continue;
             }
           }
@@ -291,14 +291,14 @@ export async function runImplementationAgent(
           const result = await executeTool(toolCall.name, toolCall.arguments, absOutputDir, planFile, task.number);
           if ((toolCall.name === "write_file" || toolCall.name === "replace_text") && !result.startsWith("Error")) {
             filesWritten++;
-            console.log(`    📝 updated ${toolCall.arguments["path"]}`);
+            console.log(`    💾 updated ${toolCall.arguments["path"]}`);
           } else if (toolCall.name === "run_command") {
             console.log(`    $ ${toolCall.arguments["command"]}`);
           } else {
-            console.log(`    🔧 ${toolCall.name}(${JSON.stringify(toolCall.arguments).slice(0, 80)})`);
+            console.log(`    🔩 ${toolCall.name}(${JSON.stringify(toolCall.arguments).slice(0, 80)})`);
           }
           if (result.startsWith("Error")) {
-            console.log(`    ✗  ${result.slice(0, 200)}`);
+            console.log(`    ❌ ${result.slice(0, 200)}`);
           }
           messages.push({
             role: "tool",

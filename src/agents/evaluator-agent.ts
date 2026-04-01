@@ -79,7 +79,7 @@ export async function runEvaluatorAgent(
     console.log(`    🎭 Playwright MCP ready (${mcpTools.length} tools)`);
   } catch (err) {
     // If Playwright MCP can't start, do a text-only evaluation
-    console.warn(`    ⚠  Could not start Playwright MCP: ${err}. Doing text-only evaluation.`);
+    console.warn(`    ⚠️  Could not start Playwright MCP: ${err}. Doing text-only evaluation.`);
   }
 
   const availableTools: ToolDefinition[] = [
@@ -120,7 +120,7 @@ Use the available Playwright tools to navigate to the application, explore its f
     if (response.finishReason === "stop" || response.toolCalls.length === 0) {
       const iterationsLeft = 30 - i - 1;
       const msg = response.content?.trim();
-      if (msg) console.log(`    ↳ Evaluator narrated: "${msg.slice(0, 200)}"`);
+      if (msg) console.log(`    💬 Evaluator narrated: "${msg.slice(0, 200)}"`);
       if (iterationsLeft > 0) {
         // Nudge: don't give up, keep exploring
         messages.push({

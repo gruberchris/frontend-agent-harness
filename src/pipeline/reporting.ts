@@ -71,9 +71,12 @@ export function printReport(report: PipelineReport): void {
   console.log(
     `\nIterations: ${chalk.cyan(report.totalIterations)}  |  ` +
     `Elapsed: ${chalk.cyan(elapsed)}  |  ` +
-    `Result: ${resultColor(chalk.bold(report.result))}` +
-    (report.resultReason ? ` — ${report.resultReason}` : ""),
+    `Result: ${resultColor(chalk.bold(report.result))}`,
   );
+  if (report.resultReason) {
+    console.log();
+    console.log(formatResultReason(report.resultReason));
+  }
   console.log();
   console.log();
 }
@@ -89,6 +92,17 @@ function padStart(s: string, len: number): string {
   const plain = s.replace(/\u001B\[[0-9;]*m/g, "");
   const pad = Math.max(0, len - plain.length);
   return " ".repeat(pad) + s;
+}
+
+function formatResultReason(reason: string): string {
+  // Split on numbered list items like "1)" "2)" etc. and put each on its own line
+  const parts = reason.split(/(?=\s*\d+\))/);
+  if (parts.length <= 1) return `  ${reason}`;
+  return parts
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0)
+    .map((p) => `  ${p}`)
+    .join("\n");
 }
 
 function formatElapsed(ms: number): string {

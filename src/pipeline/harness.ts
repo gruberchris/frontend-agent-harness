@@ -73,7 +73,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
   console.log(chalk.dim(`Max iterations: ${config.maxEvaluatorIterations}\n`));
 
   // ── Step 1: Task Agent (initial plan) ───────────────────────────────────────
-  console.log(chalk.bold("📋 Step 1: Task Agent — generating plan.md..."));
+  console.log(chalk.bold("📐 Step 1: Task Agent — generating plan.md..."));
   const designContent = await designFile.text();
 
   let taskAgentUsage = emptyTokenUsage();
@@ -91,7 +91,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
   taskAgentUsage = addTokenUsage(taskAgentUsage, taskResult.usage);
   taskAgentCalls++;
 
-  console.log(chalk.green(`✓ plan.md generated`));
+  console.log(chalk.green(`✅ plan.md generated`));
 
   // ── Start dev server ─────────────────────────────────────────────────────────
   let devServerHandle: Awaited<ReturnType<typeof startDevServer>> | null = null;
@@ -105,7 +105,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
 
   for (let iteration = 1; iteration <= config.maxEvaluatorIterations; iteration++) {
     totalIterations = iteration;
-    console.log(chalk.bold(`\n🔨 Step 2 (iteration ${iteration}): Implementation...`));
+    console.log(chalk.bold(`\n🏗️  Step 2 (iteration ${iteration}): Implementation...`));
 
     // ── Step 2: Implementation Coordinator ──────────────────────────────────
     const coordResult = await runImplementationCoordinator(
@@ -123,7 +123,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
     implCoordCalls += coordResult.tasksCompleted;
 
     console.log(
-      chalk.green(`✓ Implementation complete (${coordResult.tasksCompleted} tasks done)`),
+      chalk.green(`✅ Implementation complete (${coordResult.tasksCompleted} tasks done)`),
     );
 
     // ── Start/restart dev server ────────────────────────────────────────────
@@ -131,7 +131,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
       activeHandles.delete(devServerHandle);
       await devServerHandle.stop();
     }
-    console.log(chalk.bold(`\n🌐 Starting dev server at ${appUrl}...`));
+    console.log(chalk.bold(`\n🖥️  Starting dev server at ${appUrl}...`));
     try {
       devServerHandle = await startDevServer(
         config.outputDir,
@@ -139,13 +139,13 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
         config.devServer.port,
       );
       activeHandles.add(devServerHandle);
-      console.log(chalk.green(`✓ Dev server running at ${appUrl}`));
+      console.log(chalk.green(`✅ Dev server running at ${appUrl}`));
     } catch (err) {
-      console.warn(chalk.yellow(`⚠ Could not start dev server: ${err}`));
+      console.warn(chalk.yellow(`⚠️  Could not start dev server: ${err}`));
     }
 
     // ── Step 3: Evaluator Agent ──────────────────────────────────────────────
-    console.log(chalk.bold(`\n🔍 Step 3 (iteration ${iteration}): Evaluator Agent...`));
+    console.log(chalk.bold(`\n🧪 Step 3 (iteration ${iteration}): Evaluator Agent...`));
     const currentDesign = await Bun.file(config.designFile).text();
 
     const evalResult = await runEvaluatorAgent(
@@ -167,21 +167,23 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
     if (evalResult.decision === "PASS") {
       result = "SUCCESS";
       resultReason = evalResult.explanation;
-      console.log(chalk.green(`✓ Evaluator: PASS — ${evalResult.explanation}`));
+      console.log();
+      console.log(chalk.green(`✅ Evaluator: PASS — ${evalResult.explanation}`));
       break;
     }
 
-    console.log(chalk.yellow(`⚠ Evaluator: NEEDS_WORK — ${evalResult.explanation}`));
+    console.log();
+    console.log(chalk.yellow(`⚠️  Evaluator: NEEDS_WORK — ${evalResult.explanation}`));
 
     if (iteration >= config.maxEvaluatorIterations) {
       result = "FAILURE";
       resultReason = `Max iterations (${config.maxEvaluatorIterations}) reached. Last issue: ${evalResult.explanation}`;
-      console.log(chalk.red(`✗ Max iterations reached. Pipeline terminating.`));
+      console.log(chalk.red(`❌ Max iterations reached. Pipeline terminating.`));
       break;
     }
 
     // ── Re-run Task Agent with evaluator feedback ─────────────────────────────
-    console.log(chalk.bold(`\n📋 Re-running Task Agent with evaluator feedback (memory.md updated)...`));
+    console.log(chalk.bold(`\n🔄 Re-running Task Agent with evaluator feedback (memory.md updated)...`));
     const updatedDesign = await Bun.file(config.designFile).text();
 
     let existingFileTree: string | undefined;
@@ -205,7 +207,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
     );
     taskAgentUsage = addTokenUsage(taskAgentUsage, reTaskResult.usage);
     taskAgentCalls++;
-    console.log(chalk.green(`✓ New plan.md generated for iteration ${iteration + 1}`));
+    console.log(chalk.green(`✅ New plan.md generated for iteration ${iteration + 1}`));
   }
 
   // ── Cleanup ──────────────────────────────────────────────────────────────────

@@ -98,11 +98,11 @@ export async function runImplementationCoordinator(
     const nextTask = await getNextPendingTask(planFile);
 
     if (!nextTask) {
-      console.log(chalk.green("✓ All tasks in plan.md are completed."));
+      console.log(chalk.green("✅ All tasks in plan.md are completed."));
       break;
     }
 
-    console.log(chalk.cyan(`\n→ Implementing Task ${nextTask.number}: ${nextTask.title}`));
+    console.log(chalk.cyan(`\n▶️  Implementing Task ${nextTask.number}: ${nextTask.title}`));
 
     const projectContext = await buildProjectContext(planFile, outputDir, memoryFile);
 
@@ -122,7 +122,7 @@ export async function runImplementationCoordinator(
     totalUsage = addTokenUsage(totalUsage, result.usage);
     tasksCompleted++;
 
-    console.log(chalk.green(`  ✓ Task ${nextTask.number} completed: ${result.summary}`));
+    console.log(chalk.green(`  ✅ Task ${nextTask.number} completed: ${result.summary}`));
   }
 
   return { tasksCompleted, usage: totalUsage };

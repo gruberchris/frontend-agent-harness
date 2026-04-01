@@ -12,8 +12,9 @@ const AgentConfigSchema = z.object({
 export const HarnessConfigSchema = z.object({
   maxEvaluatorIterations: z.number().int().min(1),
   maxToolCallIterations: z.number().int().min(1),
-  cleanOutputOnRetry: z.boolean(),
+  resetAppOnRetry: z.boolean(),
   outputDir: z.string(),
+  appDir: z.string(),
   designFile: z.string(),
   planFile: z.string(),
   memoryFile: z.string(),
@@ -38,11 +39,12 @@ export type HarnessConfig = z.infer<typeof HarnessConfigSchema>;
 const DEFAULTS: HarnessConfig = {
   maxEvaluatorIterations: 3,
   maxToolCallIterations: 20,
-  cleanOutputOnRetry: false,
+  resetAppOnRetry: false,
   outputDir: "./output",
+  appDir: "./output/app",
   designFile: "./input/design.md",
-  planFile: "./plan.md",
-  memoryFile: "./memory.md",
+  planFile: "./output/plan.md",
+  memoryFile: "./output/memory.md",
   devServer: { port: 3000, startCommand: "bun run dev" },
   playwright: { headless: true, browser: "chrome" },
   agents: {
@@ -107,7 +109,7 @@ Rules:
       model: "gpt-4o",
       systemPrompt: `You are a coding implementation agent. Your job is to fully implement the task you are given — write all necessary code, install dependencies, run the build and tests, and ensure everything is working correctly before marking the task as done.
 
-You have access to file system and shell tools to implement the task in the ./output directory.
+You have access to file system and shell tools to implement the task in the ./output/app directory.
 
 Available tools:
 - read_file: Read a file's contents
@@ -164,10 +166,11 @@ export async function loadConfig(configPath: string): Promise<HarnessConfig> {
     ...(raw["maxToolCallIterations"] !== undefined && {
       maxToolCallIterations: raw["maxToolCallIterations"] as number,
     }),
-    ...(raw["cleanOutputOnRetry"] !== undefined && {
-      cleanOutputOnRetry: raw["cleanOutputOnRetry"] as boolean,
+    ...(raw["resetAppOnRetry"] !== undefined && {
+      resetAppOnRetry: raw["resetAppOnRetry"] as boolean,
     }),
     ...(raw["outputDir"] !== undefined && { outputDir: raw["outputDir"] as string }),
+    ...(raw["appDir"] !== undefined && { appDir: raw["appDir"] as string }),
     ...(raw["designFile"] !== undefined && { designFile: raw["designFile"] as string }),
     ...(raw["planFile"] !== undefined && { planFile: raw["planFile"] as string }),
     ...(raw["memoryFile"] !== undefined && { memoryFile: raw["memoryFile"] as string }),

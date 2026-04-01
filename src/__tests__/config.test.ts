@@ -16,8 +16,9 @@ describe("loadConfig", () => {
     const config = await loadConfig("/tmp/nonexistent-config-xyz.json");
     expect(config.maxEvaluatorIterations).toBe(3);
     expect(config.outputDir).toBe("./output");
+    expect(config.appDir).toBe("./output/app");
     expect(config.designFile).toBe("./input/design.md");
-    expect(config.planFile).toBe("./plan.md");
+    expect(config.planFile).toBe("./output/plan.md");
     expect(config.devServer.port).toBe(3000);
     expect(config.playwright.browser).toBe("chrome");
     expect(config.playwright.headless).toBe(true);

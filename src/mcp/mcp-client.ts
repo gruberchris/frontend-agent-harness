@@ -32,13 +32,14 @@ export class McpClient {
   >();
   private buffer = "";
 
-  constructor(private readonly command: string[]) {}
+  constructor(private readonly command: string[], private readonly cwd?: string) {}
 
   async start(): Promise<void> {
     this.subprocess = Bun.spawn(this.command, {
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
+      ...(this.cwd !== undefined && { cwd: this.cwd }),
     });
 
     this.readLoop();

@@ -42,11 +42,12 @@ mock.module("../agents/implementation-coordinator.ts", () => ({
 
 let evalCallCount = 0;
 let evalShouldPass = true;
+let evalPassFromCallN = 1; // pass starting from this call number (1-indexed); default = always pass
 
 mock.module("../agents/evaluator-agent.ts", () => ({
   runEvaluatorAgent: mock(async () => {
     evalCallCount++;
-    if (evalShouldPass) {
+    if (evalShouldPass && evalCallCount >= evalPassFromCallN) {
       return {
         decision: "PASS",
         explanation: "All good",
@@ -72,6 +73,7 @@ describe("runHarness - success path", () => {
   test("completes successfully when evaluator passes on first iteration", async () => {
     evalCallCount = 0;
     evalShouldPass = true;
+    evalPassFromCallN = 1;
 
     const tmpDesignFile = `/tmp/harness-design-${Date.now()}.md`;
     const tmpPlanFile = `/tmp/harness-plan-${Date.now()}.md`;
@@ -84,8 +86,11 @@ describe("runHarness - success path", () => {
     const report = await runHarness({
       maxEvaluatorIterations: 3, maxToolCallIterations: 20,
       outputDir: tmpOutputDir,
+      appDir: tmpOutputDir + "/app",
       designFile: tmpDesignFile,
       planFile: tmpPlanFile,
+      memoryFile: tmpOutputDir + "/memory.md",
+      resetAppOnRetry: false,
       devServer: { port: 3000, startCommand: "bun run dev" },
       playwright: { headless: true, browser: "chrome" },
       agents: {
@@ -106,6 +111,7 @@ describe("runHarness - max iterations failure", () => {
   test("terminates with FAILURE when max iterations reached", async () => {
     evalCallCount = 0;
     evalShouldPass = false;
+    evalPassFromCallN = 1;
 
     const tmpDesignFile = `/tmp/harness-design-${Date.now()}.md`;
     const tmpPlanFile = `/tmp/harness-plan-${Date.now()}.md`;
@@ -118,8 +124,11 @@ describe("runHarness - max iterations failure", () => {
     const report = await runHarness({
       maxEvaluatorIterations: 2, maxToolCallIterations: 20,
       outputDir: tmpOutputDir,
+      appDir: tmpOutputDir + "/app",
       designFile: tmpDesignFile,
       planFile: tmpPlanFile,
+      memoryFile: tmpOutputDir + "/memory.md",
+      resetAppOnRetry: false,
       devServer: { port: 3001, startCommand: "bun run dev" },
       playwright: { headless: true, browser: "chrome" },
       agents: {
@@ -143,8 +152,11 @@ describe("runHarness - missing design file", () => {
       runHarness({
         maxEvaluatorIterations: 3, maxToolCallIterations: 20,
         outputDir: "/tmp/output",
+        appDir: "/tmp/output/app",
         designFile: "/tmp/nonexistent-design-xyz.md",
         planFile: "/tmp/plan.md",
+        resetAppOnRetry: false,
+        memoryFile: "/tmp/memory.md",
         devServer: { port: 3000, startCommand: "bun run dev" },
         playwright: { headless: true, browser: "chrome" },
         agents: {
@@ -155,5 +167,67 @@ describe("runHarness - missing design file", () => {
         },
       }),
     ).rejects.toThrow("Design file not found");
+  });
+});
+
+describe("runHarness - resetAppOnRetry", () => {
+  test("clears appDir and resets planFile on retry but preserves memoryFile and rest of outputDir", async () => {
+    evalCallCount = 0;
+    evalShouldPass = true;
+    evalPassFromCallN = 2; // fail on call 1, pass on call 2
+
+    const tmpDesignFile = `/tmp/harness-design-reset-${Date.now()}.md`;
+    const tmpOutputDir = `/tmp/harness-output-reset-${Date.now()}`;
+    const tmpAppDir = `${tmpOutputDir}/app`;
+    const tmpPlanFile = `${tmpOutputDir}/plan.md`;
+    const tmpMemoryFile = `${tmpOutputDir}/memory.md`;
+    trackedFiles.push(tmpDesignFile, tmpOutputDir);
+
+    await Bun.write(tmpDesignFile, "# Design doc");
+
+    // Pre-populate appDir with a marker file (simulates first iteration output)
+    await fs.mkdir(tmpAppDir, { recursive: true });
+    await Bun.write(`${tmpAppDir}/marker.txt`, "should be deleted on retry");
+
+    // Put a file in outputDir but OUTSIDE appDir (should survive)
+    await Bun.write(`${tmpOutputDir}/outside.txt`, "should survive retry");
+
+    // Pre-write memory file with existing content (should survive)
+    await Bun.write(tmpMemoryFile, "prior memory content");
+
+    const { runHarness } = await import("../pipeline/harness.ts");
+
+    const report = await runHarness({
+      maxEvaluatorIterations: 3,
+      maxToolCallIterations: 20,
+      outputDir: tmpOutputDir,
+      appDir: tmpAppDir,
+      designFile: tmpDesignFile,
+      planFile: tmpPlanFile,
+      memoryFile: tmpMemoryFile,
+      resetAppOnRetry: true,
+      devServer: { port: 3002, startCommand: "bun run dev" },
+      playwright: { headless: true, browser: "chrome" },
+      agents: {
+        taskAgent: { model: "gpt-4o", systemPrompt: "You are an architect." },
+        implementationCoordinator: { model: "gpt-4.1", systemPrompt: "You are a coordinator." },
+        implementationAgent: { model: "gpt-4o", systemPrompt: "You are a coder." },
+        evaluatorAgent: { model: "gpt-4o", systemPrompt: "You are an evaluator." },
+      },
+    });
+
+    // Two iterations: NEEDS_WORK on first, PASS on second
+    expect(report.totalIterations).toBe(2);
+    expect(report.result).toBe("SUCCESS");
+
+    // appDir marker should have been cleared on retry
+    expect(await Bun.file(`${tmpAppDir}/marker.txt`).exists()).toBe(false);
+
+    // File outside appDir in outputDir should be untouched
+    expect(await Bun.file(`${tmpOutputDir}/outside.txt`).exists()).toBe(true);
+    expect(await Bun.file(`${tmpOutputDir}/outside.txt`).text()).toBe("should survive retry");
+
+    // memoryFile should be preserved (not cleared by retry)
+    expect(await Bun.file(tmpMemoryFile).text()).toBe("prior memory content");
   });
 });

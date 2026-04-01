@@ -10,9 +10,14 @@ afterEach(async () => {
   trackedFiles.length = 0;
 });
 
-// Mock Playwright MCP server
+// Mock Playwright MCP server — captures constructor args for inspection
+let capturedMcpOutputDir: string | undefined;
+
 mock.module("../mcp/playwright-mcp-server.ts", () => ({
   PlaywrightMcpServer: class MockPlaywrightMcpServer {
+    constructor(_browser: string, _headless: boolean, outputDir?: string) {
+      capturedMcpOutputDir = outputDir;
+    }
     async start() {
       return [
         {
@@ -98,6 +103,7 @@ describe("runEvaluatorAgent - PASS", () => {
       tmpPlanFile,
       tmpDesignFile,
       tmpMemoryFile,
+      "/tmp/eval-output",
       "chrome",
       true,
       "You are an expert UX evaluator.",
@@ -124,6 +130,7 @@ describe("runEvaluatorAgent - NEEDS_WORK", () => {
       tmpPlanFile,
       tmpDesignFile,
       tmpMemoryFile,
+      "/tmp/eval-output",
       "chrome",
       true,
       "You are an expert UX evaluator.",
@@ -139,5 +146,34 @@ describe("runEvaluatorAgent - NEEDS_WORK", () => {
     const updatedMemory = await Bun.file(tmpMemoryFile).text();
     expect(updatedMemory).toContain("Add a header component");
     expect(updatedMemory).toContain("Evaluator Findings");
+  });
+});
+
+describe("runEvaluatorAgent - outputDir wiring", () => {
+  test("passes outputDir to PlaywrightMcpServer constructor", async () => {
+    mockDecision = "pass";
+    capturedMcpOutputDir = undefined;
+
+    const { runEvaluatorAgent } = await import("../agents/evaluator-agent.ts");
+    const tmpDesignFile = `/tmp/eval-design-dir-${Date.now()}.md`;
+    const tmpPlanFile = `/tmp/eval-plan-dir-${Date.now()}.md`;
+    const tmpMemoryFile = `/tmp/eval-memory-dir-${Date.now()}.md`;
+    trackedFiles.push(tmpDesignFile, tmpPlanFile, tmpMemoryFile);
+    await Bun.write(tmpDesignFile, "# Design");
+
+    await runEvaluatorAgent(
+      "gpt-4o",
+      "http://localhost:3000",
+      "# Design",
+      tmpPlanFile,
+      tmpDesignFile,
+      tmpMemoryFile,
+      "/tmp/my-output-dir",
+      "chrome",
+      true,
+      "You are an evaluator.",
+    );
+
+    expect(capturedMcpOutputDir).toBe("/tmp/my-output-dir");
   });
 });

@@ -70,6 +70,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
   console.log(chalk.dim(`Design: ${config.designFile}`));
   console.log(chalk.dim(`Plan:   ${config.planFile}`));
   console.log(chalk.dim(`Memory: ${config.memoryFile}`));
+  console.log(chalk.dim(`App:    ${config.appDir}`));
   console.log(chalk.dim(`Output: ${config.outputDir}`));
   console.log(chalk.dim(`Max iterations: ${config.maxEvaluatorIterations}\n`));
 
@@ -114,7 +115,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
       design, // re-use loaded design (images already in memory)
       config.planFile,
       config.memoryFile,
-      config.outputDir,
+      config.appDir,
       config.agents.implementationAgent.systemPrompt,
       config.agents.implementationAgent.reasoningEffort,
       config.agents.implementationAgent.maxTokens,
@@ -135,7 +136,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
     console.log(chalk.bold(`\n🖥️  Starting dev server at ${appUrl}...`));
     try {
       devServerHandle = await startDevServer(
-        config.outputDir,
+        config.appDir,
         config.devServer.startCommand,
         config.devServer.port,
       );
@@ -156,6 +157,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
       config.planFile,
       config.designFile,
       config.memoryFile,
+      config.outputDir,
       config.playwright.browser,
       config.playwright.headless,
       config.agents.evaluatorAgent.systemPrompt,
@@ -187,12 +189,12 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
     console.log(chalk.bold(`\n🔄 Re-running Task Agent with evaluator feedback (memory.md updated)...`));
 
     let existingFileTree: string | undefined;
-    if (config.cleanOutputOnRetry) {
-      console.log(chalk.dim(`  Clearing output directory for clean rebuild...`));
-      await clearDirectory(path.resolve(config.outputDir));
+    if (config.resetAppOnRetry) {
+      console.log(chalk.dim(`  Clearing app directory for clean rebuild...`));
+      await clearDirectory(path.resolve(config.appDir));
       await Bun.write(config.planFile, "");
     } else {
-      existingFileTree = await readFileTree(path.resolve(config.outputDir));
+      existingFileTree = await readFileTree(path.resolve(config.appDir));
     }
 
     const reTaskResult = await runTaskAgent(

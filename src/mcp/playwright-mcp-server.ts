@@ -6,6 +6,7 @@ export class PlaywrightMcpServer {
   constructor(
     private readonly browser: string = "chrome",
     private readonly headless: boolean = true,
+    private readonly outputDir?: string,
   ) {}
 
   async start(): Promise<McpTool[]> {
@@ -16,7 +17,7 @@ export class PlaywrightMcpServer {
     ];
     if (this.headless) args.push("--headless");
 
-    this.client = new McpClient(["bunx", ...args]);
+    this.client = new McpClient(["bunx", ...args], this.outputDir);
     await this.client.start();
     return this.client.listTools();
   }

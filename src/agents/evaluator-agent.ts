@@ -62,6 +62,7 @@ export async function runEvaluatorAgent(
   planFile: string,
   designFile: string,
   memoryFile: string,
+  outputDir: string,
   playwrightBrowser: string,
   playwrightHeadless: boolean,
   systemPrompt: string,
@@ -70,7 +71,7 @@ export async function runEvaluatorAgent(
 ): Promise<EvaluatorResult> {
   const client = new CopilotClient(model, reasoningEffort, maxTokens);
   let usage = emptyTokenUsage();
-  const playwright = new PlaywrightMcpServer(playwrightBrowser, playwrightHeadless);
+  const playwright = new PlaywrightMcpServer(playwrightBrowser, playwrightHeadless, outputDir);
 
   let mcpTools: McpTool[] = [];
 

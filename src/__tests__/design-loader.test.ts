@@ -59,9 +59,9 @@ describe("loadDesignContent", () => {
 
     expect(result.text).toBe(content);
     expect(result.images).toHaveLength(1);
-    expect(result.images[0].mimeType).toBe("image/png");
-    expect(result.images[0].altText).toBe("UI screenshot");
-    expect(result.images[0].data).toBe(MINIMAL_PNG_BASE64);
+    expect(result.images[0]!.mimeType).toBe("image/png");
+    expect(result.images[0]!.altText).toBe("UI screenshot");
+    expect(result.images[0]!.data).toBe(MINIMAL_PNG_BASE64);
   });
 
   test("loads a local JPEG image and sets the correct mimeType", async () => {
@@ -75,8 +75,8 @@ describe("loadDesignContent", () => {
     const result = await loadDesignContent(designPath);
 
     expect(result.images).toHaveLength(1);
-    expect(result.images[0].mimeType).toBe("image/jpeg");
-    expect(result.images[0].data).toBe(FAKE_JPEG_BYTES.toString("base64"));
+    expect(result.images[0]!.mimeType).toBe("image/jpeg");
+    expect(result.images[0]!.data).toBe(FAKE_JPEG_BYTES.toString("base64"));
   });
 
   test("treats .jpeg extension as image/jpeg", async () => {
@@ -85,7 +85,7 @@ describe("loadDesignContent", () => {
     const designPath = await writeTempDesign(dir, `# D\n\n![](./img.jpeg)`);
 
     const result = await loadDesignContent(designPath);
-    expect(result.images[0].mimeType).toBe("image/jpeg");
+    expect(result.images[0]!.mimeType).toBe("image/jpeg");
   });
 
   test("skips http:// image references", async () => {
@@ -140,10 +140,10 @@ describe("loadDesignContent", () => {
     const result = await loadDesignContent(designPath);
 
     expect(result.images).toHaveLength(2);
-    expect(result.images[0].mimeType).toBe("image/png");
-    expect(result.images[0].altText).toBe("First");
-    expect(result.images[1].mimeType).toBe("image/jpeg");
-    expect(result.images[1].altText).toBe("Second");
+    expect(result.images[0]!.mimeType).toBe("image/png");
+    expect(result.images[0]!.altText).toBe("First");
+    expect(result.images[1]!.mimeType).toBe("image/jpeg");
+    expect(result.images[1]!.altText).toBe("Second");
   });
 
   test("resolves image paths relative to the design file's directory, not cwd", async () => {
@@ -159,7 +159,7 @@ describe("loadDesignContent", () => {
     const result = await loadDesignContent(designPath);
 
     expect(result.images).toHaveLength(1);
-    expect(result.images[0].mimeType).toBe("image/png");
+    expect(result.images[0]!.mimeType).toBe("image/png");
   });
 
   test("preserves the original text unchanged in .text property", async () => {
@@ -183,7 +183,7 @@ describe("loadDesignContent", () => {
     const result = await loadDesignContent(designPath);
 
     expect(result.images).toHaveLength(1);
-    expect(result.images[0].altText).toBe("Local");
+    expect(result.images[0]!.altText).toBe("Local");
   });
 });
 
@@ -209,8 +209,8 @@ describe("buildMessageContent", () => {
     const images = [{ altText: "", data: MINIMAL_PNG_BASE64, mimeType: "image/png" }];
     const parts = buildMessageContent("My prompt", images) as Array<{ type: string; text?: string }>;
 
-    expect(parts[0].type).toBe("text");
-    expect(parts[0].text).toBe("My prompt");
+    expect(parts[0]!.type).toBe("text");
+    expect(parts[0]!.text).toBe("My prompt");
   });
 
   test("subsequent parts are image content blocks with correct data and mimeType", () => {
@@ -225,8 +225,8 @@ describe("buildMessageContent", () => {
     }>;
 
     expect(parts).toHaveLength(3);
-    expect(parts[1]).toEqual({ type: "image", data: "aaa", mimeType: "image/png" });
-    expect(parts[2]).toEqual({ type: "image", data: "bbb", mimeType: "image/jpeg" });
+    expect(parts[1]!).toEqual({ type: "image", data: "aaa", mimeType: "image/png" });
+    expect(parts[2]!).toEqual({ type: "image", data: "bbb", mimeType: "image/jpeg" });
   });
 
   test("does not mutate the images array", () => {

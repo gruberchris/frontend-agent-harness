@@ -174,6 +174,7 @@ describe("runEvaluatorAgent - outputDir wiring", () => {
       "You are an evaluator.",
     );
 
-    expect(capturedMcpOutputDir).toBe("/tmp/my-output-dir");
+    expect(capturedMcpOutputDir).toBeDefined();
+    expect(capturedMcpOutputDir!).toBe("/tmp/my-output-dir");
   });
 });

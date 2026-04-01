@@ -6,6 +6,7 @@ import type { PlanTask } from "../plan/types.ts";
 import { buildMessageContent, type DesignContent } from "../design/design-loader.ts";
 import * as path from "node:path";
 import * as fs from "node:fs/promises";
+import type { Dirent } from "node:fs";
 
 const IMPL_TOOLS: ToolDefinition[] = [
   {
@@ -274,8 +275,8 @@ export async function runImplementationAgent(
           // Guard: refuse completion if no work has been done at all (no files exist in output dir)
           if (filesWritten === 0) {
             const entries = await fs.readdir(absOutputDir, { recursive: true }).catch(() => [] as string[]);
-            const hasAnyFile = (entries as Array<string | fs.Dirent>).some((e) =>
-              typeof e === "string" ? !e.endsWith("/") : (e as fs.Dirent).isFile(),
+            const hasAnyFile = (entries as Array<string | Dirent>).some((e) =>
+              typeof e === "string" ? !e.endsWith("/") : (e as Dirent).isFile(),
             );
             if (!hasAnyFile) {
               messages.push({

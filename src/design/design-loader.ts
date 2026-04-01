@@ -22,7 +22,7 @@ export interface DesignContent {
 
 /**
  * Reads a design file, finds all local image references (![alt](path)),
- * loads and base64-encodes them. HTTP/HTTPS URLs and missing or unsupported
+ * loads, and base64-encodes them. HTTP/HTTPS URLs and missing or unsupported
  * files are silently skipped.
  */
 export async function loadDesignContent(designFilePath: string): Promise<DesignContent> {
@@ -36,7 +36,7 @@ export async function loadDesignContent(designFilePath: string): Promise<DesignC
 
   while ((match = imageRefRegex.exec(text)) !== null) {
     const altText = match[1] ?? "";
-    const imagePath = match[2].trim();
+    const imagePath = (match[2] ?? "").trim();
 
     const ext = path.extname(imagePath).toLowerCase();
     const mimeType = SUPPORTED_EXTENSIONS[ext];

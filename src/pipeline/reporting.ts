@@ -27,12 +27,12 @@ export function printReport(report: PipelineReport): void {
 
   const elapsed = formatElapsed(report.elapsedMs);
 
-  console.log("\n" + chalk.bold("═".repeat(70)));
+  console.log("\n" + chalk.bold("═".repeat(84)));
   console.log(chalk.bold("  Pipeline Report"));
-  console.log(chalk.bold("═".repeat(70)));
+  console.log(chalk.bold("═".repeat(84)));
 
-  const COL_NAME = 28;
-  const COL_NUM = 10;
+  const COL_NAME = 34;
+  const COL_NUM = 14;
 
   const header = [
     padEnd("Step", COL_NAME),
@@ -42,7 +42,7 @@ export function printReport(report: PipelineReport): void {
     padStart("Calls", 8),
   ].join("");
   console.log(chalk.dim(header));
-  console.log(chalk.dim("─".repeat(70)));
+  console.log(chalk.dim("─".repeat(84)));
 
   for (const step of report.steps) {
     const label = step.callCount > 1 ? `${step.name} (×${step.callCount})` : step.name;
@@ -56,7 +56,7 @@ export function printReport(report: PipelineReport): void {
     console.log(row);
   }
 
-  console.log(chalk.dim("─".repeat(70)));
+  console.log(chalk.dim("─".repeat(84)));
   const totalRow = [
     padEnd(chalk.bold("GRAND TOTAL"), COL_NAME),
     padStart(chalk.bold(grandTotal.promptTokens.toLocaleString()), COL_NUM),
@@ -65,7 +65,7 @@ export function printReport(report: PipelineReport): void {
     padStart("", 8),
   ].join("");
   console.log(totalRow);
-  console.log(chalk.bold("═".repeat(70)));
+  console.log(chalk.bold("═".repeat(84)));
 
   const resultColor = report.result === "SUCCESS" ? chalk.green : chalk.red;
   console.log(
@@ -74,6 +74,7 @@ export function printReport(report: PipelineReport): void {
     `Result: ${resultColor(chalk.bold(report.result))}` +
     (report.resultReason ? ` — ${report.resultReason}` : ""),
   );
+  console.log();
   console.log();
 }
 

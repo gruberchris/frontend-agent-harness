@@ -40,7 +40,7 @@ const DEFAULTS: HarnessConfig = {
   maxToolCallIterations: 20,
   cleanOutputOnRetry: false,
   outputDir: "./output",
-  designFile: "./design.md",
+  designFile: "./input/design.md",
   planFile: "./plan.md",
   memoryFile: "./memory.md",
   devServer: { port: 3000, startCommand: "bun run dev" },

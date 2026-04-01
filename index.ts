@@ -10,7 +10,7 @@ Usage:
   bun run index.ts [options]
 
 Options:
-  --design <path>   Path to design.md  (default: ./design.md)
+  --design <path>   Path to design.md  (default: ./input/design.md)
   --config <path>   Path to config.json (default: ./config.json)
   --help            Show this help message
 

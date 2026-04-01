@@ -2,7 +2,7 @@
   "maxEvaluatorIterations": 3,
   "cleanOutputOnRetry": false,
   "outputDir": "./output",
-  "designFile": "./design.md",
+  "designFile": "./input/design.md",
   "planFile": "./plan.md",
   "devServer": {
     "port": 3000,

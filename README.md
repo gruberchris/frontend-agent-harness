@@ -47,7 +47,7 @@ input/design.md + output/memory.md
 ## Prerequisites
 
 - [Bun](https://bun.sh) v1.1+
-- A GitHub account with [Copilot subscription](https://github.com/features/copilot) (for the API token)
+- An LLM provider (see [Providers](#providers) below)
 - Playwright browsers (auto-installed, see setup below)
 
 ---
@@ -62,7 +62,7 @@ bun install
 
 ### 2. Configure environment
 
-Copy the example env file and add your GitHub token:
+Copy the example env file and add your credentials for the provider you intend to use:
 
 ```bash
 cp .env.example .env
@@ -70,7 +70,13 @@ cp .env.example .env
 
 Edit `.env`:
 ```
+# GitHub Copilot (default provider)
 GITHUB_TOKEN=ghp_your_token_here
+
+# Azure OpenAI (if using the azure provider)
+# AZURE_OPENAI_API_KEY=your_azure_key_here
+
+# Ollama and LM Studio do not require credentials
 ```
 
 ### 3. Configure the harness
@@ -78,8 +84,10 @@ GITHUB_TOKEN=ghp_your_token_here
 Copy and edit `config.json` (already provided with defaults):
 
 ```bash
-# Edit config.json to customize models, ports, iteration limits, etc.
+# Edit config.json to customize the provider, models, ports, iteration limits, etc.
 ```
+
+See [Providers](#providers) for how to select and configure a provider.
 
 ### 4. Install Playwright browsers (for the evaluator)
 
@@ -112,6 +120,66 @@ bun run index.ts
 ```bash
 bun run index.ts --design ./my-app-design.md --config ./config.json
 ```
+
+---
+
+## Providers
+
+The harness supports four LLM providers, configured globally via the `provider` block in `config.json`. All agents use the same provider.
+
+### GitHub Copilot (default)
+
+Requires a GitHub account with a [Copilot subscription](https://github.com/features/copilot).
+
+```json
+{ "provider": { "type": "copilot" } }
+```
+
+Set `GITHUB_TOKEN` in `.env`, or the harness falls back to `gh auth token`.
+
+### Azure OpenAI
+
+```json
+{
+  "provider": {
+    "type": "azure",
+    "endpoint": "https://your-resource.openai.azure.com",
+    "apiVersion": "2024-06-01"
+  }
+}
+```
+
+Set `AZURE_OPENAI_API_KEY` in `.env`. The model name in each agent config must match your Azure deployment name.
+
+### Ollama (local)
+
+Runs models locally via [Ollama](https://ollama.com). No API key needed.
+
+```json
+{
+  "provider": {
+    "type": "ollama",
+    "baseUrl": "http://localhost:11434"
+  }
+}
+```
+
+`baseUrl` is optional — defaults to `http://localhost:11434`. `reasoningEffort` is ignored for Ollama.
+
+### LM Studio (local)
+
+Runs models locally via [LM Studio](https://lmstudio.ai). No API key needed.
+
+```json
+{
+  "provider": {
+    "type": "lm-studio",
+    "baseUrl": "http://localhost:1234"
+  }
+}
+```
+
+`baseUrl` is optional — defaults to `http://localhost:1234`. `reasoningEffort` is ignored for LM Studio.
 
 ---
 
@@ -213,7 +281,7 @@ frontend-agent-harness/
 │   └── app/                              # Generated frontend app lives here
 └── src/
     ├── agents/                           # Task, Implementation, Evaluator logic
-    ├── llm/                              # GitHub Copilot API client
+    ├── llm/                              # LLM provider abstraction + Copilot, Azure, Ollama, LM Studio providers
     ├── mcp/                              # Playwright MCP lifecycle
     ├── plan/                             # Robust plan parser
     ├── pipeline/                         # Harness orchestration & reporting

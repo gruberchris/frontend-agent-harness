@@ -14,6 +14,8 @@ export const HarnessConfigSchema = z.object({
   provider: ProviderConfigSchema,
   maxEvaluatorIterations: z.number().int().min(1),
   maxToolCallIterations: z.number().int().min(1),
+  commandTimeoutSecs: z.number().int().min(10),
+  llmTimeoutSecs: z.number().int().min(10),
   resetAppOnRetry: z.boolean(),
   outputDir: z.string(),
   appDir: z.string(),
@@ -42,6 +44,8 @@ const DEFAULTS: HarnessConfig = {
   provider: { type: "copilot" },
   maxEvaluatorIterations: 3,
   maxToolCallIterations: 20,
+  commandTimeoutSecs: 120,
+  llmTimeoutSecs: 300,
   resetAppOnRetry: false,
   outputDir: "./output",
   appDir: "./output/app",
@@ -169,6 +173,9 @@ export async function loadConfig(configPath: string): Promise<HarnessConfig> {
     }),
     ...(raw["maxToolCallIterations"] !== undefined && {
       maxToolCallIterations: raw["maxToolCallIterations"] as number,
+    }),
+    ...(raw["commandTimeoutSecs"] !== undefined && {
+      commandTimeoutSecs: raw["commandTimeoutSecs"] as number,
     }),
     ...(raw["resetAppOnRetry"] !== undefined && {
       resetAppOnRetry: raw["resetAppOnRetry"] as boolean,

@@ -1,4 +1,5 @@
 import * as path from "node:path";
+import * as fs from "node:fs/promises";
 
 export interface DevServerHandle {
   url: string;
@@ -13,12 +14,20 @@ export async function startDevServer(
   startCommand: string,
   port: number,
 ): Promise<DevServerHandle> {
-  const [cmd, ...cmdArgs] = startCommand.split(" ");
   const absCwd = path.resolve(outputDir);
-  const proc = Bun.spawn([cmd!, ...cmdArgs], {
+
+  // Ensure the working directory exists — Bun.spawn reports a confusing ENOENT
+  // against the *executable* name when the cwd is missing, masking the real cause.
+  await fs.mkdir(absCwd, { recursive: true });
+
+  // Use the absolute path to /bin/sh so PATH lookup is never needed for the
+  // shell itself, then let the shell resolve the rest of the command (including
+  // /opt/homebrew/bin/bun) using the inherited process.env.PATH.
+  const proc = Bun.spawn(["/bin/sh", "-c", startCommand], {
     cwd: absCwd,
     stdout: "pipe",
     stderr: "pipe",
+    env: { ...process.env },
   });
 
   const url = `http://localhost:${port}`;

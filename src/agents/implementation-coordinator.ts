@@ -54,6 +54,13 @@ async function buildFileTree(
   }
 }
 
+async function readFileCapped(filePath: string, cap = 3_000): Promise<string | null> {
+  const file = Bun.file(filePath);
+  if (!(await file.exists())) return null;
+  const text = await file.text();
+  return text.length > cap ? text.slice(0, cap) + "\n... (truncated)" : text;
+}
+
 async function buildProjectContext(planFile: string, outputDir: string, memoryFile: string): Promise<string> {
   const parts: string[] = [];
   const absOutputDir = path.resolve(outputDir);
@@ -74,10 +81,45 @@ async function buildProjectContext(planFile: string, outputDir: string, memoryFi
   const tree = await buildFileTree(absOutputDir, 2);
   parts.push(`## Current Output Directory Structure\n${tree || "(empty — no files yet)"}`);
 
+  // 3. Key file contents — injected upfront so the agent doesn't burn tool-call
+  //    iterations reading the same files on every task.
+  //    Tech-agnostic: reads whatever small files exist at the root and in immediate
+  //    subdirectories. Works for React/Vite, ASP.NET, Go, static HTML, etc.
+  const SKIP_DIRS = new Set([
+    "node_modules", "dist", "build", "bin", "obj", ".git", ".vite", "coverage", "__pycache__",
+  ]);
+  const keyParts: string[] = [];
+
+  const rootEntries = await fs.readdir(absOutputDir, { withFileTypes: true }).catch(() => []);
+
+  // Root-level files (project configs, manifests, entry points, etc.)
+  for (const entry of rootEntries.filter((e) => e.isFile()).slice(0, 12)) {
+    const content = await readFileCapped(path.join(absOutputDir, entry.name), 2_000);
+    if (content !== null) keyParts.push(`**${entry.name}**\n\`\`\`\n${content}\n\`\`\``);
+  }
+
+  // Files in immediate non-excluded subdirectories (e.g. src/, pages/, wwwroot/)
+  const subDirs = rootEntries
+    .filter((e) => e.isDirectory() && !SKIP_DIRS.has(e.name))
+    .slice(0, 4);
+  for (const dir of subDirs) {
+    const dirPath = path.join(absOutputDir, dir.name);
+    const subEntries = await fs.readdir(dirPath, { withFileTypes: true }).catch(() => []);
+    for (const entry of subEntries.filter((e) => e.isFile()).slice(0, 6)) {
+      const rel = `${dir.name}/${entry.name}`;
+      const content = await readFileCapped(path.join(dirPath, entry.name), 1_500);
+      if (content !== null) keyParts.push(`**${rel}**\n\`\`\`\n${content}\n\`\`\``);
+    }
+  }
+
+  if (keyParts.length > 0) {
+    parts.push(`## Key File Contents\n${keyParts.join("\n\n")}`);
+  }
+
   const context = parts.join("\n\n");
 
-  // Hard cap on total context size sent per task (~30KB)
-  const CONTEXT_CAP = 30_000;
+  // Hard cap on total context size sent per task (~50KB)
+  const CONTEXT_CAP = 50_000;
   if (context.length > CONTEXT_CAP) {
     return context.slice(0, CONTEXT_CAP) + "\n\n... (project context truncated to fit context window)";
   }
@@ -95,6 +137,8 @@ export async function runImplementationCoordinator(
   reasoningEffort?: string,
   maxTokens?: number,
   maxToolCallIterations?: number,
+  commandTimeoutSecs?: number,
+  llmTimeoutSecs?: number,
 ): Promise<CoordinatorResult> {
   let totalUsage = emptyTokenUsage();
   let tasksCompleted = 0;
@@ -103,6 +147,7 @@ export async function runImplementationCoordinator(
     const nextTask = await getNextPendingTask(planFile);
 
     if (!nextTask) {
+      console.log();
       console.log(chalk.green("✅ All tasks in plan.md are completed."));
       break;
     }
@@ -130,6 +175,8 @@ export async function runImplementationCoordinator(
       reasoningEffort,
       maxTokens,
       maxToolCallIterations,
+      commandTimeoutSecs,
+      llmTimeoutSecs,
     );
 
     totalUsage = addTokenUsage(totalUsage, result.usage);
@@ -193,6 +240,8 @@ export async function runImplementationCoordinator(
       reasoningEffort,
       maxTokens,
       maxToolCallIterations,
+      commandTimeoutSecs,
+      llmTimeoutSecs,
     );
 
     totalUsage = addTokenUsage(totalUsage, repairResult.usage);

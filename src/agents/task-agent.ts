@@ -19,8 +19,9 @@ export async function runTaskAgent(
   reasoningEffort?: string,
   maxTokens?: number,
   existingFileTree?: string,
+  llmTimeoutSecs?: number,
 ): Promise<TaskAgentResult> {
-  const client = createLLMClient(providerConfig, model, reasoningEffort, maxTokens);
+  const client = createLLMClient(providerConfig, model, reasoningEffort, maxTokens, llmTimeoutSecs);
   const usage = emptyTokenUsage();
 
   const existingPlan = (await Bun.file(planFile).exists()) ? await Bun.file(planFile).text() : "";

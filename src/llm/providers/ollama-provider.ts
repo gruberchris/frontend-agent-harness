@@ -7,9 +7,9 @@ export class OllamaProvider extends OpenAICompatibleProvider {
   protected override readonly supportsReasoningEffort = false;
   private baseUrl: string;
 
-  constructor(model: string, baseUrl?: string, maxTokens?: number) {
+  constructor(model: string, baseUrl?: string, maxTokens?: number, llmTimeoutSecs?: number) {
     // reasoningEffort is not forwarded for Ollama — pass undefined to super
-    super(model, undefined, maxTokens);
+    super(model, undefined, maxTokens, llmTimeoutSecs);
     this.baseUrl = (baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, "");
   }
 

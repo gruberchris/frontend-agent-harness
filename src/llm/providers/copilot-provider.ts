@@ -21,6 +21,10 @@ async function resolveToken(): Promise<string> {
 }
 
 export class CopilotProvider extends OpenAICompatibleProvider {
+  constructor(model: string, reasoningEffort?: string, maxTokens?: number, llmTimeoutSecs?: number) {
+    super(model, reasoningEffort, maxTokens, llmTimeoutSecs);
+  }
+
   protected async initClient(): Promise<void> {
     const token = await resolveToken();
     this.client = new OpenAI({

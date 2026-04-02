@@ -13,12 +13,16 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
   protected model: string;
   protected reasoningEffort?: string;
   protected maxTokens?: number;
+  protected llmTimeoutMs?: number;
   protected readonly supportsReasoningEffort: boolean = true;
+  /** Parameter name for the token limit. Subclasses may override to "max_completion_tokens". */
+  protected readonly maxTokensParamName: string = "max_tokens";
 
-  constructor(model: string, reasoningEffort?: string, maxTokens?: number) {
+  constructor(model: string, reasoningEffort?: string, maxTokens?: number, llmTimeoutSecs?: number) {
     this.model = model;
     this.reasoningEffort = reasoningEffort;
     this.maxTokens = maxTokens;
+    this.llmTimeoutMs = llmTimeoutSecs !== undefined ? llmTimeoutSecs * 1000 : undefined;
   }
 
   protected abstract initClient(): Promise<void>;
@@ -72,16 +76,45 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
       function: { name: t.name, description: t.description, parameters: t.parameters },
     }));
 
-    const response = await this.client.chat.completions.create({
-      model: this.model,
-      messages: openaiMessages as Parameters<typeof this.client.chat.completions.create>[0]["messages"],
-      tools: openaiTools,
-      tool_choice: openaiTools ? "auto" : undefined,
-      ...(this.supportsReasoningEffort && this.reasoningEffort && {
-        reasoning_effort: this.reasoningEffort as "low" | "medium" | "high",
-      }),
-      ...(this.maxTokens && { max_tokens: this.maxTokens }),
-    });
+    // Spinner while waiting for LLM — only in interactive terminals.
+    // Uses \r to overwrite in place; cleared completely when the response arrives
+    // so it leaves no trace in the scrollback.
+    const FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    let frameIdx = 0;
+    const tickerStart = Date.now();
+    let ticker: ReturnType<typeof setInterval> | undefined;
+    if (process.stdout.isTTY) {
+      const spin = () => {
+        const elapsed = Math.round((Date.now() - tickerStart) / 1000);
+        const frame = FRAMES[frameIdx++ % FRAMES.length];
+        process.stdout.write(`\r    ${frame} 🤔 ${elapsed}s `);
+      };
+      spin();
+      ticker = setInterval(spin, 100);
+    }
+
+    let response: Awaited<ReturnType<typeof this.client.chat.completions.create>>;
+    try {
+      response = await this.client.chat.completions.create({
+        model: this.model,
+        messages: openaiMessages as Parameters<typeof this.client.chat.completions.create>[0]["messages"],
+        tools: openaiTools,
+        tool_choice: openaiTools ? "auto" : undefined,
+        ...(this.supportsReasoningEffort && this.reasoningEffort && {
+          reasoning_effort: this.reasoningEffort as "low" | "medium" | "high",
+        }),
+        ...(this.maxTokens && { [this.maxTokensParamName]: this.maxTokens }),
+      }, {
+        ...(this.llmTimeoutMs !== undefined && { timeout: this.llmTimeoutMs }),
+      });
+    } finally {
+      if (ticker !== undefined) {
+        clearInterval(ticker);
+        // Erase the spinner line entirely — no trace left in the scrollback.
+        const cols = process.stdout.columns ?? 80;
+        process.stdout.write("\r" + " ".repeat(cols) + "\r");
+      }
+    }
 
     const choice = response.choices[0];
     if (!choice) {

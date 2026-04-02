@@ -90,6 +90,8 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
     config.agents.taskAgent.systemPrompt,
     config.agents.taskAgent.reasoningEffort,
     config.agents.taskAgent.maxTokens,
+    undefined,
+    config.llmTimeoutSecs,
   );
   taskAgentUsage = addTokenUsage(taskAgentUsage, taskResult.usage);
   taskAgentCalls++;
@@ -122,6 +124,8 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
       config.agents.implementationAgent.reasoningEffort,
       config.agents.implementationAgent.maxTokens,
       config.maxToolCallIterations,
+      config.commandTimeoutSecs,
+      config.llmTimeoutSecs,
     );
     implCoordUsage = addTokenUsage(implCoordUsage, coordResult.usage);
     implCoordCalls += coordResult.tasksCompleted;
@@ -169,6 +173,8 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
       config.agents.evaluatorAgent.reasoningEffort,
       config.agents.evaluatorAgent.maxTokens,
       devServerError,
+      config.llmTimeoutSecs,
+      config.maxToolCallIterations,
     );
     evaluatorUsage = addTokenUsage(evaluatorUsage, evalResult.usage);
     evaluatorCalls++;
@@ -192,7 +198,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
     }
 
     // ── Re-run Task Agent with evaluator feedback ─────────────────────────────
-    console.log(chalk.bold(`\n🔄 Re-running Task Agent with evaluator feedback (memory.md updated)...`));
+    console.log(chalk.bold(`\n🔄 Re-running Task Agent with evaluator feedback...`));
 
     let existingFileTree: string | undefined;
     if (config.resetAppOnRetry) {
@@ -213,6 +219,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
       config.agents.taskAgent.reasoningEffort,
       config.agents.taskAgent.maxTokens,
       existingFileTree,
+      config.llmTimeoutSecs,
     );
     taskAgentUsage = addTokenUsage(taskAgentUsage, reTaskResult.usage);
     taskAgentCalls++;

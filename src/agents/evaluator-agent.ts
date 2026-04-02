@@ -71,8 +71,10 @@ export async function runEvaluatorAgent(
   reasoningEffort?: string,
   maxTokens?: number,
   devServerError?: string,
+  llmTimeoutSecs?: number,
+  maxToolCallIterations = 40,
 ): Promise<EvaluatorResult> {
-  const client = createLLMClient(providerConfig, model, reasoningEffort, maxTokens);
+  const client = createLLMClient(providerConfig, model, reasoningEffort, maxTokens, llmTimeoutSecs);
   let usage = emptyTokenUsage();
 
   // Skip Playwright entirely when we know the dev server is down — no point navigating
@@ -118,7 +120,18 @@ Use the available Playwright tools to navigate to the application, explore its f
   let corrections = "";
 
   // Tool-calling loop
-  for (let i = 0; i < 30; i++) {
+  for (let i = 0; i < maxToolCallIterations; i++) {
+    const iterationsLeft = maxToolCallIterations - i - 1;
+
+    // Warn the agent when it's running low so it wraps up and decides,
+    // even if it hasn't stopped calling Playwright tools on its own.
+    if (iterationsLeft === 5) {
+      messages.push({
+        role: "user",
+        content: `⚠️ You have only ${iterationsLeft} steps remaining. Stop exploring and call decide_pass or decide_needs_work NOW with a full explanation and corrections. Do not make any more Playwright tool calls unless absolutely necessary.`,
+      });
+    }
+
     const response = await client.chat(messages, availableTools);
     usage = addTokenUsage(usage, response.usage);
 
@@ -129,7 +142,6 @@ Use the available Playwright tools to navigate to the application, explore its f
     });
 
     if (response.finishReason === "stop" || response.toolCalls.length === 0) {
-      const iterationsLeft = 30 - i - 1;
       const msg = response.content?.trim();
       if (msg) console.log(`    💬 Evaluator narrated: "${msg.slice(0, 200)}"`);
       if (iterationsLeft > 0) {
@@ -240,12 +252,81 @@ Use the available Playwright tools to navigate to the application, explore its f
 
   await playwright?.stop();
 
-  // If NEEDS_WORK, append corrections to memory.md
-  if (decision === "NEEDS_WORK" && corrections) {
+  // ── Forced decision pass ───────────────────────────────────────────────────
+  // If the main loop ended without a valid decision (loop exhausted, model
+  // narrated its decision as text instead of calling the tool, or required
+  // fields were left empty), force the model to make a complete decision using
+  // ONLY the decision tools. Playwright is already stopped — no more browsing.
+  const hasValidDecision =
+    (decision === "PASS" && !!explanation) ||
+    (decision === "NEEDS_WORK" && !!explanation && !!corrections);
+
+  if (!hasValidDecision) {
+    const missingFields = [];
+    if (!explanation) missingFields.push("explanation");
+    if (decision === "NEEDS_WORK" && !corrections) missingFields.push("corrections (specific fixes for the implementation agent)");
+
+    const forcedPrompt = decided
+      ? `You called ${decision} but left the following required fields empty: ${missingFields.join(", ")}. ` +
+        `Call decide_pass or decide_needs_work again — this time fill in every required field completely.`
+      : `You ran out of steps without calling decide_pass or decide_needs_work as a tool call. ` +
+        `You MUST make your final decision NOW. Call decide_pass if the app meets the design, ` +
+        `or decide_needs_work with a complete explanation AND specific corrections the implementation agent must make. ` +
+        `You cannot use any Playwright tools.`;
+
+    messages.push({ role: "user", content: forcedPrompt });
+
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const forced = await client.chat(messages, DECISION_TOOLS);
+      usage = addTokenUsage(usage, forced.usage);
+
+      messages.push({
+        role: "assistant",
+        content: forced.content,
+        toolCalls: forced.toolCalls.length > 0 ? forced.toolCalls : undefined,
+      });
+
+      for (const tc of forced.toolCalls) {
+        if (tc.name === "decide_pass") {
+          const exp = String(tc.arguments["explanation"] ?? "");
+          if (exp) { decision = "PASS"; explanation = exp; }
+          messages.push({ role: "tool", content: "Decision recorded: PASS", toolCallId: tc.id });
+        } else if (tc.name === "decide_needs_work") {
+          const exp = String(tc.arguments["explanation"] ?? "");
+          const cor = String(tc.arguments["corrections"] ?? "");
+          decision = "NEEDS_WORK";
+          if (exp) explanation = exp;
+          if (cor) corrections = cor;
+          messages.push({ role: "tool", content: "Decision recorded: NEEDS_WORK", toolCallId: tc.id });
+        }
+      }
+
+      // Valid decision — done
+      if (decision === "PASS" && explanation) break;
+      if (decision === "NEEDS_WORK" && explanation && corrections) break;
+
+      // Still missing fields — nudge specifically about what's missing
+      const stillMissing = [];
+      if (!explanation) stillMissing.push("explanation");
+      if (decision === "NEEDS_WORK" && !corrections) stillMissing.push("corrections");
+      messages.push({
+        role: "user",
+        content: `The ${stillMissing.join(" and ")} field(s) are still empty. ` +
+          `Call decide_${decision === "PASS" ? "pass" : "needs_work"} again with ${stillMissing.join(" and ")} filled in completely.`,
+      });
+    }
+  }
+
+  // ── Memory update ──────────────────────────────────────────────────────────
+  // If NEEDS_WORK, append corrections/explanation to memory.md as lessons learned.
+  if (decision === "NEEDS_WORK") {
+    // Last-resort fallback if forced pass still couldn't extract content
+    if (!explanation) explanation = corrections || "Evaluator indicated the app needs work but provided no specific details.";
+    if (!corrections) corrections = explanation;
+
     const timestamp = new Date().toISOString();
     const correctionSection = `\n\n---\n\n## Evaluator Findings (${timestamp})\n\n${corrections}\n`;
-    
-    // Update memory.md (The persistent "lessons learned")
+
     const existingMemory = (await Bun.file(memoryFile).exists()) ? await Bun.file(memoryFile).text() : "";
     await Bun.write(memoryFile, existingMemory + correctionSection);
   }

@@ -6,7 +6,7 @@ import { AzureProvider } from "../../llm/providers/azure-provider.ts";
 // when multiple test files mock "openai" with different named-export sets).
 class TestAzureProvider extends AzureProvider {
   readonly capturedCreateArgs: Record<string, unknown>[] = [];
-  private resolvedApiKey?: string;
+  private resolvedKey?: string;
 
   constructor(
     model: string,
@@ -19,11 +19,12 @@ class TestAzureProvider extends AzureProvider {
   }
 
   protected override async initClient(): Promise<void> {
+    const bearerToken = process.env["AZURE_OPENAI_BEARER_TOKEN"];
     const apiKey = process.env["AZURE_OPENAI_API_KEY"];
-    if (!apiKey) {
-      throw new Error("AZURE_OPENAI_API_KEY environment variable is required for the Azure provider.");
+    if (!bearerToken && !apiKey) {
+      throw new Error("Either AZURE_OPENAI_BEARER_TOKEN or AZURE_OPENAI_API_KEY must be set for the Azure provider.");
     }
-    this.resolvedApiKey = apiKey;
+    this.resolvedKey = bearerToken ?? apiKey;
     const self = this;
     // Inject a mock OpenAI-compatible client
     this.client = {
@@ -43,27 +44,43 @@ class TestAzureProvider extends AzureProvider {
     } as never;
   }
 
-  /** Expose resolved API key for assertions */
-  get testApiKey(): string | undefined { return this.resolvedApiKey; }
+  /** Expose whichever credential was resolved (bearer token or api key) */
+  get testResolvedKey(): string | undefined { return this.resolvedKey; }
 }
 
 describe("AzureProvider", () => {
   beforeEach(() => {
     delete process.env["AZURE_OPENAI_API_KEY"];
+    delete process.env["AZURE_OPENAI_BEARER_TOKEN"];
   });
 
-  test("throws when AZURE_OPENAI_API_KEY is not set", async () => {
+  test("throws when neither AZURE_OPENAI_BEARER_TOKEN nor AZURE_OPENAI_API_KEY is set", async () => {
     const provider = new AzureProvider("gpt-4o", "https://my.openai.azure.com", "2024-06-01");
     await expect(provider.chat([{ role: "user", content: "hi" }])).rejects.toThrow(
-      "AZURE_OPENAI_API_KEY",
+      "AZURE_OPENAI_BEARER_TOKEN or AZURE_OPENAI_API_KEY",
     );
   });
 
-  test("reads AZURE_OPENAI_API_KEY from environment", async () => {
+  test("reads AZURE_OPENAI_API_KEY from environment (api-key path)", async () => {
     process.env["AZURE_OPENAI_API_KEY"] = "azure-key-123";
     const provider = new TestAzureProvider("gpt-4o", "https://my.openai.azure.com", "2024-06-01");
     await provider.chat([{ role: "user", content: "hi" }]);
-    expect(provider.testApiKey).toBe("azure-key-123");
+    expect(provider.testResolvedKey).toBe("azure-key-123");
+  });
+
+  test("reads AZURE_OPENAI_BEARER_TOKEN from environment (bearer path)", async () => {
+    process.env["AZURE_OPENAI_BEARER_TOKEN"] = "bearer-token-abc";
+    const provider = new TestAzureProvider("gpt-4o", "https://my.openai.azure.com", "2024-06-01");
+    await provider.chat([{ role: "user", content: "hi" }]);
+    expect(provider.testResolvedKey).toBe("bearer-token-abc");
+  });
+
+  test("prefers AZURE_OPENAI_BEARER_TOKEN over AZURE_OPENAI_API_KEY when both are set", async () => {
+    process.env["AZURE_OPENAI_BEARER_TOKEN"] = "bearer-token-abc";
+    process.env["AZURE_OPENAI_API_KEY"] = "api-key-xyz";
+    const provider = new TestAzureProvider("gpt-4o", "https://my.openai.azure.com", "2024-06-01");
+    await provider.chat([{ role: "user", content: "hi" }]);
+    expect(provider.testResolvedKey).toBe("bearer-token-abc");
   });
 
   test("sends the correct model in the request", async () => {
@@ -87,11 +104,12 @@ describe("AzureProvider", () => {
     expect(provider.capturedCreateArgs[0]?.["reasoning_effort"]).toBeUndefined();
   });
 
-  test("forwards max_tokens when provided", async () => {
+  test("forwards max_completion_tokens (not max_tokens) when provided", async () => {
     process.env["AZURE_OPENAI_API_KEY"] = "key";
     const provider = new TestAzureProvider("gpt-4o", "https://x.openai.azure.com", "2024-06-01", undefined, 1024);
     await provider.chat([{ role: "user", content: "hi" }]);
-    expect(provider.capturedCreateArgs[0]?.["max_tokens"]).toBe(1024);
+    expect(provider.capturedCreateArgs[0]?.["max_completion_tokens"]).toBe(1024);
+    expect(provider.capturedCreateArgs[0]?.["max_tokens"]).toBeUndefined();
   });
 
   test("returns parsed LLMResponse with token usage", async () => {
@@ -113,13 +131,23 @@ describe("AzureProvider", () => {
     expect(provider.capturedCreateArgs).toHaveLength(2);
   });
 
-  test("verifies AzureProvider source uses AzureOpenAI with config args", async () => {
+  test("uses bearer auth (OpenAI base client) when AZURE_OPENAI_BEARER_TOKEN is set", async () => {
+    const src = await Bun.file(
+      new URL("../../llm/providers/azure-provider.ts", import.meta.url).pathname,
+    ).text();
+    expect(src).toContain("AZURE_OPENAI_BEARER_TOKEN");
+    expect(src).toContain("baseURL");
+    expect(src).toContain("defaultQuery");
+    expect(src).toContain("api-version");
+  });
+
+  test("uses api-key auth (AzureOpenAI client) when AZURE_OPENAI_API_KEY is set", async () => {
     const src = await Bun.file(
       new URL("../../llm/providers/azure-provider.ts", import.meta.url).pathname,
     ).text();
     expect(src).toContain("AzureOpenAI");
+    expect(src).toContain("AZURE_OPENAI_API_KEY");
     expect(src).toContain("this.endpoint");
     expect(src).toContain("this.apiVersion");
-    expect(src).toContain("AZURE_OPENAI_API_KEY");
   });
 });

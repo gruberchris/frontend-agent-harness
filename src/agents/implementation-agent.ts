@@ -160,9 +160,11 @@ export async function runImplementationAgent(
   systemPrompt: string,
   reasoningEffort?: string,
   maxTokens?: number,
-  maxToolCallIterations = 20,
+  maxToolCallIterations = 50,
+  commandTimeoutSecs = 120,
+  llmTimeoutSecs?: number,
 ): Promise<ImplementationAgentResult> {
-  const client = createLLMClient(providerConfig, model, reasoningEffort, maxTokens);
+  const client = createLLMClient(providerConfig, model, reasoningEffort, maxTokens, llmTimeoutSecs);
   let usage = emptyTokenUsage();
 
   const absOutputDir = path.resolve(outputDir);
@@ -212,11 +214,19 @@ export async function runImplementationAgent(
     }
 
     // Trim conversation history if it gets too large (keep system + first user + last N turns)
-    if (messages.length > 32) {
+    if (messages.length > 60) {
       const system = messages[0]!;
       const firstUser = messages[1]!;
-      // Keep only the last 20 messages (10 assistant/tool pairs) plus system + first user
-      const recent = messages.slice(-20);
+      // Keep only the last 40 messages plus system + first user.
+      // IMPORTANT: the slice must not start with a `tool` message — those require
+      // a preceding `assistant` message with `tool_calls`. If an assistant+tools
+      // batch straddles the cut point, advance past the orphaned tool messages so
+      // the slice always begins at a clean turn boundary.
+      let recentStart = messages.length - 40;
+      while (recentStart < messages.length && messages[recentStart]!.role === "tool") {
+        recentStart++;
+      }
+      const recent = messages.slice(recentStart);
       messages.length = 0;
       messages.push(system, firstUser, { role: "user", content: "(Earlier conversation trimmed to fit context window. Continue from the most recent state above.)" }, ...recent);
     }
@@ -295,14 +305,14 @@ export async function runImplementationAgent(
             summary: (toolCall.arguments["summary"] as string) ?? "Task completed",
           };
           // Execute the underlying status update
-          await executeTool(toolCall.name, toolCall.arguments, absOutputDir, planFile, task.number);
+          await executeTool(toolCall.name, toolCall.arguments, absOutputDir, planFile, task.number, commandTimeoutSecs);
           messages.push({
             role: "tool",
             content: "Task marked as completed.",
             toolCallId: toolCall.id,
           });
         } else {
-          const result = await executeTool(toolCall.name, toolCall.arguments, absOutputDir, planFile, task.number);
+          const result = await executeTool(toolCall.name, toolCall.arguments, absOutputDir, planFile, task.number, commandTimeoutSecs);
           if ((toolCall.name === "write_file" || toolCall.name === "replace_text") && !result.startsWith("Error")) {
             filesWritten++;
             console.log(`    💾 updated ${toolCall.arguments["path"]}`);
@@ -358,6 +368,7 @@ async function executeTool(
   absOutputDir: string,
   planFile: string,
   taskNumber: number,
+  commandTimeoutSecs = 120,
 ): Promise<string> {
   try {
     switch (name) {
@@ -488,16 +499,95 @@ async function executeTool(
 
       case "run_command": {
         const command = String(args["command"] ?? "");
-        const proc = Bun.spawn(["bash", "-c", command], {
+
+        // Reject long-running server/watch processes — they never exit and will
+        // always time out. The harness starts the dev server itself after all
+        // tasks are complete. Implementation tasks should only run build,
+        // typecheck, test, and install commands.
+        const BLOCKED_PATTERNS: Array<[RegExp, string]> = [
+          // JS/TS dev scripts (Bun, npm, yarn, pnpm)
+          [/\brun\s+dev\b/,                           "dev script"],
+          [/\brun\s+start\b/,                         "start script"],
+          [/\bnpm\s+start\b/,                         "npm start"],
+          [/\bbun\s+dev\b/,                           "bun dev"],
+          // Bundler dev servers
+          [/\bvite(?!\s+(build|preview|--version))\b/, "Vite dev server"],
+          [/\bwebpack(-dev-server|\s+serve)\b/,       "webpack dev server"],
+          [/\bnext\s+(dev|start)\b/,                  "Next.js server"],
+          [/\bnuxt\s+(dev|start|preview)\b/,          "Nuxt dev server"],
+          [/\bgatsby\s+develop\b/,                    "Gatsby dev server"],
+          [/\bparcel\s+(?!build)/,                    "Parcel dev server"],
+          [/\brollup\s+.*--watch\b/,                  "Rollup watch"],
+          [/\besbuild\s+.*--watch\b/,                 "esbuild watch"],
+          // Static file servers
+          [/\blive-server\b/,                         "live-server"],
+          [/\bhttp-server\b/,                         "http-server"],
+          [/\b(npx|bunx|pnpx)\s+serve\b/,            "serve (static server)"],
+          [/^\s*serve\b/,                             "serve (static server)"],
+          // Hot reload / watch daemons
+          [/\bnodemon\b/,                             "nodemon"],
+          [/--watch\b/,                               "watch mode"],
+          [/--hot\b/,                                 "HMR / hot reload"],
+          // .NET
+          [/\bdotnet\s+(run|watch)\b/,                "dotnet run/watch"],
+          // Go
+          [/\bgo\s+run\b/,                            "go run"],
+          [/\b(air|reflex|CompileDaemon|gin)\b/,      "Go hot-reload tool"],
+          // Python
+          [/\bflask\s+run\b/,                         "Flask dev server"],
+          [/\buvicorn\b/,                             "Uvicorn ASGI server"],
+          [/\bgunicorn\b/,                            "Gunicorn WSGI server"],
+          [/\bmanage\.py\s+runserver\b/,              "Django runserver"],
+          [/\bstreamlit\s+run\b/,                     "Streamlit server"],
+          [/\bfastapi\s+dev\b/,                       "FastAPI dev server"],
+          // Ruby
+          [/\brails\s+(server|s)\b/,                  "Rails server"],
+          [/\b(rackup|puma|unicorn)\b/,               "Ruby app server"],
+          // PHP
+          [/\bartisan\s+serve\b/,                     "Laravel artisan serve"],
+          [/\bphp\s+-S\b/,                            "PHP built-in server"],
+          // Java / JVM
+          [/\bspring-boot:run\b/,                     "Spring Boot server"],
+          [/\bbootRun\b/,                             "Spring Boot bootRun"],
+          // Static site generators (serve/watch modes)
+          [/\bhugo\s+(serve|server)\b/,               "Hugo server"],
+          [/\bjekyll\s+serve\b/,                      "Jekyll server"],
+          [/\bmkdocs\s+serve\b/,                      "MkDocs server"],
+          [/\beleventy\s+.*(--serve|--watch)\b/,      "Eleventy server/watch"],
+        ];
+        const blocked = BLOCKED_PATTERNS.find(([p]) => p.test(command));
+        if (blocked) {
+          return (
+            `Error: "${command}" starts a long-running ${blocked[1]} and is not allowed in implementation tasks. ` +
+            `The harness starts the dev server automatically after all tasks complete. ` +
+            `Use build/typecheck/test/install commands instead.`
+          );
+        }
+
+        const TIMEOUT_MS = commandTimeoutSecs * 1_000;
+        const proc = Bun.spawn(["/bin/sh", "-c", command], {
           cwd: absOutputDir,
           stdout: "pipe",
           stderr: "pipe",
+          env: { ...process.env },
         });
+
+        let timedOut = false;
+        const timer = setTimeout(() => {
+          timedOut = true;
+          proc.kill();
+        }, TIMEOUT_MS);
+
         const [stdout, stderr, exitCode] = await Promise.all([
           new Response(proc.stdout).text(),
           new Response(proc.stderr).text(),
           proc.exited,
         ]);
+        clearTimeout(timer);
+
+        if (timedOut) {
+          return `Error: Command timed out after ${TIMEOUT_MS / 1000}s and was killed: ${command}`;
+        }
         // Stdout: keep the tail (success messages appear at end, e.g. npm install summary).
         // Stderr: keep the head (first errors are most actionable).
         const MAX_STDOUT = 2_000;

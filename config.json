@@ -1,4 +1,7 @@
 {
+  "provider": {
+    "type": "copilot"
+  },
   "maxEvaluatorIterations": 3,
   "resetAppOnRetry": false,
   "outputDir": "./output",

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ProviderConfigSchema } from "./llm/provider.ts";
 
 const REASONING_EFFORT_VALUES = ["none", "minimal", "low", "medium", "high", "xhigh"] as const;
 
@@ -10,6 +11,7 @@ const AgentConfigSchema = z.object({
 });
 
 export const HarnessConfigSchema = z.object({
+  provider: ProviderConfigSchema,
   maxEvaluatorIterations: z.number().int().min(1),
   maxToolCallIterations: z.number().int().min(1),
   resetAppOnRetry: z.boolean(),
@@ -37,6 +39,7 @@ export const HarnessConfigSchema = z.object({
 export type HarnessConfig = z.infer<typeof HarnessConfigSchema>;
 
 const DEFAULTS: HarnessConfig = {
+  provider: { type: "copilot" },
   maxEvaluatorIterations: 3,
   maxToolCallIterations: 20,
   resetAppOnRetry: false,
@@ -160,6 +163,7 @@ export async function loadConfig(configPath: string): Promise<HarnessConfig> {
 
   const merged: HarnessConfig = {
     ...DEFAULTS,
+    ...(raw["provider"] !== undefined && { provider: raw["provider"] as HarnessConfig["provider"] }),
     ...(raw["maxEvaluatorIterations"] !== undefined && {
       maxEvaluatorIterations: raw["maxEvaluatorIterations"] as number,
     }),

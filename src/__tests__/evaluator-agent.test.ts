@@ -45,12 +45,11 @@ mock.module("../mcp/playwright-mcp-server.ts", () => ({
   },
 }));
 
-// Mock CopilotClient for PASS scenario
+// Mock createLLMClient for PASS scenario
 let mockDecision: "pass" | "needs_work" = "pass";
 
-mock.module("../llm/copilot-client.ts", () => ({
-  CopilotClient: class MockCopilotClient {
-    constructor(_model: string) {}
+mock.module("../llm/create-client.ts", () => ({
+  createLLMClient: () => ({
     async chat() {
       if (mockDecision === "pass") {
         return {
@@ -82,8 +81,8 @@ mock.module("../llm/copilot-client.ts", () => ({
           finishReason: "tool_calls",
         };
       }
-    }
-  },
+    },
+  }),
 }));
 
 describe("runEvaluatorAgent - PASS", () => {
@@ -98,6 +97,7 @@ describe("runEvaluatorAgent - PASS", () => {
 
     const result = await runEvaluatorAgent(
       "gpt-4o",
+      { type: "copilot" },
       "http://localhost:3000",
       "# App Design\n\nA simple todo app.",
       tmpPlanFile,
@@ -125,6 +125,7 @@ describe("runEvaluatorAgent - NEEDS_WORK", () => {
 
     const result = await runEvaluatorAgent(
       "gpt-4o",
+      { type: "copilot" },
       "http://localhost:3000",
       "# App Design\n\nA simple todo app.",
       tmpPlanFile,
@@ -163,6 +164,7 @@ describe("runEvaluatorAgent - outputDir wiring", () => {
 
     await runEvaluatorAgent(
       "gpt-4o",
+      { type: "copilot" },
       "http://localhost:3000",
       "# Design",
       tmpPlanFile,
@@ -195,6 +197,7 @@ describe("runEvaluatorAgent - devServerError", () => {
 
     const result = await runEvaluatorAgent(
       "gpt-4o",
+      { type: "copilot" },
       "http://localhost:3000",
       "# Design",
       tmpPlanFile,
@@ -225,8 +228,8 @@ describe("runEvaluatorAgent - devServerError", () => {
     mockDecision = "needs_work";
     let capturedMessages: Array<{ role: string; content: unknown }> = [];
 
-    mock.module("../llm/copilot-client.ts", () => ({
-      CopilotClient: class {
+    mock.module("../llm/create-client.ts", () => ({
+      createLLMClient: () => ({
         async chat(messages: unknown[]) {
           capturedMessages = messages as typeof capturedMessages;
           return {
@@ -235,8 +238,8 @@ describe("runEvaluatorAgent - devServerError", () => {
             usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
             finishReason: "tool_calls" as const,
           };
-        }
-      },
+        },
+      }),
     }));
 
     const { runEvaluatorAgent } = await import("../agents/evaluator-agent.ts");
@@ -248,6 +251,7 @@ describe("runEvaluatorAgent - devServerError", () => {
 
     await runEvaluatorAgent(
       "gpt-4o",
+      { type: "copilot" },
       "http://localhost:3000",
       "# Design",
       tmpPlanFile,

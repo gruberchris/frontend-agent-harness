@@ -13,7 +13,7 @@ afterEach(async () => {
 // Full pipeline harness integration tests with all agents mocked
 
 mock.module("../agents/task-agent.ts", () => ({
-  runTaskAgent: mock(async (_model: string, _design: string, planFile: string) => {
+  runTaskAgent: mock(async (_model: string, _providerConfig: unknown, _design: unknown, planFile: string) => {
     await Bun.write(
       planFile,
       `### Task 1: Build app
@@ -93,6 +93,8 @@ describe("runHarness - success path", () => {
       resetAppOnRetry: false,
       devServer: { port: 3000, startCommand: "bun run dev" },
       playwright: { headless: true, browser: "chrome" },
+      provider: { type: "copilot" },
+
       agents: {
         taskAgent: { model: "gpt-4o", systemPrompt: "You are an architect." },
         implementationCoordinator: { model: "gpt-4.1", systemPrompt: "You are a coordinator." },
@@ -131,6 +133,8 @@ describe("runHarness - max iterations failure", () => {
       resetAppOnRetry: false,
       devServer: { port: 3001, startCommand: "bun run dev" },
       playwright: { headless: true, browser: "chrome" },
+      provider: { type: "copilot" },
+
       agents: {
         taskAgent: { model: "gpt-4o", systemPrompt: "You are an architect." },
         implementationCoordinator: { model: "gpt-4.1", systemPrompt: "You are a coordinator." },
@@ -159,6 +163,8 @@ describe("runHarness - missing design file", () => {
         memoryFile: "/tmp/memory.md",
         devServer: { port: 3000, startCommand: "bun run dev" },
         playwright: { headless: true, browser: "chrome" },
+        provider: { type: "copilot" },
+
         agents: {
           taskAgent: { model: "gpt-4o", systemPrompt: "You are an architect." },
           implementationCoordinator: { model: "gpt-4.1", systemPrompt: "You are a coordinator." },
@@ -208,6 +214,8 @@ describe("runHarness - resetAppOnRetry", () => {
       resetAppOnRetry: true,
       devServer: { port: 3002, startCommand: "bun run dev" },
       playwright: { headless: true, browser: "chrome" },
+      provider: { type: "copilot" },
+
       agents: {
         taskAgent: { model: "gpt-4o", systemPrompt: "You are an architect." },
         implementationCoordinator: { model: "gpt-4.1", systemPrompt: "You are a coordinator." },

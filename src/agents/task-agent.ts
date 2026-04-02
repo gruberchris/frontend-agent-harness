@@ -1,4 +1,5 @@
-import { CopilotClient } from "../llm/copilot-client.ts";
+import { createLLMClient } from "../llm/create-client.ts";
+import type { ProviderConfig } from "../llm/provider.ts";
 import { emptyTokenUsage, type TokenUsage } from "../llm/types.ts";
 import type { LLMMessage } from "../llm/types.ts";
 import { buildMessageContent, type DesignContent } from "../design/design-loader.ts";
@@ -10,6 +11,7 @@ export interface TaskAgentResult {
 
 export async function runTaskAgent(
   model: string,
+  providerConfig: ProviderConfig,
   design: DesignContent,
   planFile: string,
   memoryFile: string,
@@ -18,7 +20,7 @@ export async function runTaskAgent(
   maxTokens?: number,
   existingFileTree?: string,
 ): Promise<TaskAgentResult> {
-  const client = new CopilotClient(model, reasoningEffort, maxTokens);
+  const client = createLLMClient(providerConfig, model, reasoningEffort, maxTokens);
   const usage = emptyTokenUsage();
 
   const existingPlan = (await Bun.file(planFile).exists()) ? await Bun.file(planFile).text() : "";

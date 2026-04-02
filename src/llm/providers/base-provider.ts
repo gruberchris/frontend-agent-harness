@@ -1,31 +1,19 @@
 import OpenAI from "openai";
-import type { LLMMessage, LLMResponse, ToolDefinition, TokenUsage } from "./types.ts";
+import type { LLMMessage, LLMResponse, ToolDefinition, TokenUsage } from "../types.ts";
+import type { LLMProvider } from "../provider.ts";
 
-async function resolveToken(): Promise<string> {
-  const envToken = process.env["GITHUB_TOKEN"];
-  if (envToken) return envToken;
-
-  // Fall back to `gh auth token` (GitHub CLI) if no env var is set
-  try {
-    const result = await Bun.$`gh auth token`.quiet();
-    const token = result.stdout.toString().trim();
-    if (token) return token;
-  } catch {
-    // gh not installed or not authenticated — fall through to error
-  }
-
-  throw new Error(
-    "No GitHub token found. Set GITHUB_TOKEN in .env or run `gh auth login` to authenticate via the GitHub CLI.\n" +
-    "Note: Personal Access Tokens (PATs) are not supported — the Copilot API requires an OAuth token.\n" +
-    "Get one with: gh auth login  (then the harness will pick it up automatically)"
-  );
-}
-
-export class CopilotClient {
-  private client!: OpenAI;
-  private model: string;
-  private reasoningEffort?: string;
-  private maxTokens?: number;
+/**
+ * Base class for all OpenAI-compatible providers (Copilot, Azure OpenAI, Ollama).
+ * Subclasses implement `initClient()` to set up the OpenAI-compatible client,
+ * and may override `supportsReasoningEffort` to control whether `reasoning_effort`
+ * is forwarded in requests.
+ */
+export abstract class OpenAICompatibleProvider implements LLMProvider {
+  protected client!: OpenAI;
+  protected model: string;
+  protected reasoningEffort?: string;
+  protected maxTokens?: number;
+  protected readonly supportsReasoningEffort: boolean = true;
 
   constructor(model: string, reasoningEffort?: string, maxTokens?: number) {
     this.model = model;
@@ -33,21 +21,13 @@ export class CopilotClient {
     this.maxTokens = maxTokens;
   }
 
-  async init(): Promise<void> {
-    const token = await resolveToken();
-    this.client = new OpenAI({
-      apiKey: token,
-      baseURL: "https://api.githubcopilot.com",
-    });
-  }
+  protected abstract initClient(): Promise<void>;
 
-  async chat(
-    messages: LLMMessage[],
-    tools?: ToolDefinition[],
-  ): Promise<LLMResponse> {
-    if (!this.client) await this.init();
+  async chat(messages: LLMMessage[], tools?: ToolDefinition[]): Promise<LLMResponse> {
+    if (!this.client) await this.initClient();
+
     const openaiMessages = messages.map((m) => {
-      let content: string | any[];
+      let content: string | unknown[];
       if (Array.isArray(m.content)) {
         content = m.content.map((part) => {
           if (part.type === "text") {
@@ -55,9 +35,7 @@ export class CopilotClient {
           } else {
             return {
               type: "image_url",
-              image_url: {
-                url: `data:${part.mimeType};base64,${part.data}`,
-              },
+              image_url: { url: `data:${part.mimeType};base64,${part.data}` },
             };
           }
         });
@@ -79,34 +57,29 @@ export class CopilotClient {
           tool_calls: m.toolCalls.map((tc) => ({
             id: tc.id,
             type: "function" as const,
-            function: {
-              name: tc.name,
-              arguments: JSON.stringify(tc.arguments),
-            },
+            function: { name: tc.name, arguments: JSON.stringify(tc.arguments) },
           })),
         };
       }
       return {
         role: m.role as "system" | "user" | "assistant",
-        content: content as any,
+        content: content as string,
       };
     });
 
     const openaiTools = tools?.map((t) => ({
       type: "function" as const,
-      function: {
-        name: t.name,
-        description: t.description,
-        parameters: t.parameters,
-      },
+      function: { name: t.name, description: t.description, parameters: t.parameters },
     }));
 
     const response = await this.client.chat.completions.create({
       model: this.model,
-      messages: openaiMessages,
+      messages: openaiMessages as Parameters<typeof this.client.chat.completions.create>[0]["messages"],
       tools: openaiTools,
       tool_choice: openaiTools ? "auto" : undefined,
-      ...(this.reasoningEffort && { reasoning_effort: this.reasoningEffort as "low" | "medium" | "high" }),
+      ...(this.supportsReasoningEffort && this.reasoningEffort && {
+        reasoning_effort: this.reasoningEffort as "low" | "medium" | "high",
+      }),
       ...(this.maxTokens && { max_tokens: this.maxTokens }),
     });
 
@@ -115,12 +88,11 @@ export class CopilotClient {
       const finishReason = (response as { finish_reason?: string }).finish_reason;
       throw new Error(
         `LLM returned no choices (model: ${this.model}, finish_reason: ${finishReason ?? "none"}).` +
-        ` This usually means the context window was exceeded or the request was filtered.`
+        ` This usually means the context window was exceeded or the request was filtered.`,
       );
     }
 
     const toolCalls = (choice.message.tool_calls ?? []).map((tc) => {
-      // OpenAI SDK types tool_calls with a union; both shapes have function
       const fn = (tc as { function: { name: string; arguments: string } }).function;
       return {
         id: tc.id,

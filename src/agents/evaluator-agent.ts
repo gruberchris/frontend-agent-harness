@@ -1,4 +1,5 @@
-import { CopilotClient } from "../llm/copilot-client.ts";
+import { createLLMClient } from "../llm/create-client.ts";
+import type { ProviderConfig } from "../llm/provider.ts";
 import { addTokenUsage, emptyTokenUsage, type TokenUsage, type MessageContentPart } from "../llm/types.ts";
 import type { LLMMessage, ToolDefinition } from "../llm/types.ts";
 import { PlaywrightMcpServer } from "../mcp/playwright-mcp-server.ts";
@@ -57,6 +58,7 @@ const DECISION_TOOLS: ToolDefinition[] = [
 
 export async function runEvaluatorAgent(
   model: string,
+  providerConfig: ProviderConfig,
   appUrl: string,
   designContent: string,
   planFile: string,
@@ -70,7 +72,7 @@ export async function runEvaluatorAgent(
   maxTokens?: number,
   devServerError?: string,
 ): Promise<EvaluatorResult> {
-  const client = new CopilotClient(model, reasoningEffort, maxTokens);
+  const client = createLLMClient(providerConfig, model, reasoningEffort, maxTokens);
   let usage = emptyTokenUsage();
 
   // Skip Playwright entirely when we know the dev server is down — no point navigating

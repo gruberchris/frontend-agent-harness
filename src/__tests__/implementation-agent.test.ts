@@ -13,9 +13,8 @@ afterEach(async () => {
 });
 
 // Mock CopilotClient: first call writes a file, second call marks complete
-mock.module("../llm/copilot-client.ts", () => ({
-  CopilotClient: class MockCopilotClient {
-    constructor(_model: string) {}
+mock.module("../llm/create-client.ts", () => ({
+  createLLMClient: () => ({
     async chat(messages: unknown[]) {
       lastChatMessages = messages as Array<{ role: string; content: string }>;
       mockCallCount++;
@@ -39,8 +38,8 @@ mock.module("../llm/copilot-client.ts", () => ({
         usage: { promptTokens: 50, completionTokens: 20, totalTokens: 70 },
         finishReason: "tool_calls" as const,
       };
-    }
-  },
+    },
+  }),
 }));
 
 describe("runImplementationAgent", () => {
@@ -67,6 +66,7 @@ describe("runImplementationAgent", () => {
 
     const result = await runImplementationAgent(
       "gpt-4o",
+      { type: "copilot" },
       task,
       { text: "# Design", images: [] },
       tmpPlanFile,
@@ -112,6 +112,7 @@ describe("runImplementationAgent", () => {
 
     await runImplementationAgent(
       "gpt-4o",
+      { type: "copilot" },
       task,
       { text: "# Design", images: [] },
       tmpPlanFile,
@@ -153,6 +154,7 @@ describe("runImplementationAgent", () => {
 
     await runImplementationAgent(
       "gpt-4o",
+      { type: "copilot" },
       task,
       { text: "# Design", images: [] },
       tmpPlanFile,
@@ -169,9 +171,8 @@ describe("runImplementationAgent", () => {
   test("returns failure summary if loop limit reached without completion", async () => {
     lastChatMessages = [];
     // Mock the client specifically for this test to always return tool calls without marking complete
-    mock.module("../llm/copilot-client.ts", () => ({
-      CopilotClient: class MockCopilotClient {
-        constructor(_model: string) {}
+    mock.module("../llm/create-client.ts", () => ({
+      createLLMClient: () => ({
         async chat(messages: unknown[]) {
           lastChatMessages = messages as Array<{ role: string; content: string }>;
           return {
@@ -182,8 +183,8 @@ describe("runImplementationAgent", () => {
             usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
             finishReason: "tool_calls" as const,
           };
-        }
-      }
+        },
+      }),
     }));
     
     // We have to re-import to use the new mock
@@ -212,6 +213,7 @@ describe("runImplementationAgent", () => {
     // Run with a very small maxIterations to trigger the limit quickly
     const result = await runImplementationAgent(
       "gpt-4o",
+      { type: "copilot" },
       task,
       { text: "# Design", images: [] },
       tmpPlanFile,
@@ -266,9 +268,8 @@ describe("replace_text tool", () => {
     await Bun.write(tmpPlan, `### Task 1: Edit file\n**Status**: pending\n**Description**: Patch\n**Acceptance Criteria**: Done\n**Example Code**:\n\`\`\`\n\`\`\`\n`);
 
     let seq = 0;
-    mock.module("../llm/copilot-client.ts", () => ({
-      CopilotClient: class {
-        constructor(_model: string) {}
+    mock.module("../llm/create-client.ts", () => ({
+      createLLMClient: () => ({
         async chat() {
           seq++;
           if (seq === 1) {
@@ -285,12 +286,12 @@ describe("replace_text tool", () => {
             usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
             finishReason: "tool_calls" as const,
           };
-        }
-      },
+        },
+      }),
     }));
 
     const { runImplementationAgent } = await import("../agents/implementation-agent.ts");
-    const result = await runImplementationAgent("gpt-4o", makeTask(), { text: "# Design", images: [] }, tmpPlan, tmpDir, undefined, "sys");
+    const result = await runImplementationAgent("gpt-4o", { type: "copilot" }, makeTask(), { text: "# Design", images: [] }, tmpPlan, tmpDir, undefined, "sys");
 
     expect(result.summary).toBe("Patched");
     const content = await Bun.file(`${tmpDir}/app.tsx`).text();
@@ -307,9 +308,8 @@ describe("replace_text tool", () => {
 
     let seq = 0;
     let capturedToolResult = "";
-    mock.module("../llm/copilot-client.ts", () => ({
-      CopilotClient: class {
-        constructor(_model: string) {}
+    mock.module("../llm/create-client.ts", () => ({
+      createLLMClient: () => ({
         async chat(messages: unknown[]) {
           seq++;
           if (seq === 1) {
@@ -330,12 +330,12 @@ describe("replace_text tool", () => {
             usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
             finishReason: "tool_calls" as const,
           };
-        }
-      },
+        },
+      }),
     }));
 
     const { runImplementationAgent } = await import("../agents/implementation-agent.ts");
-    await runImplementationAgent("gpt-4o", makeTask(), { text: "# Design", images: [] }, tmpPlan, tmpDir, undefined, "sys");
+    await runImplementationAgent("gpt-4o", { type: "copilot" }, makeTask(), { text: "# Design", images: [] }, tmpPlan, tmpDir, undefined, "sys");
 
     expect(capturedToolResult).toContain("Error");
     expect(capturedToolResult).toContain("old_string");
@@ -367,20 +367,19 @@ describe("undo_edit tool", () => {
     await Bun.write(tmpPlan, `### Task 1: Undo test\n**Status**: pending\n**Description**: Test\n**Acceptance Criteria**: Done\n**Example Code**:\n\`\`\`\n\`\`\`\n`);
 
     let seq = 0;
-    mock.module("../llm/copilot-client.ts", () => ({
-      CopilotClient: class {
-        constructor(_model: string) {}
+    mock.module("../llm/create-client.ts", () => ({
+      createLLMClient: () => ({
         async chat() {
           seq++;
           if (seq === 1) return { content: null, toolCalls: [{ id: "w1", name: "write_file", arguments: { path: "app.tsx", content: "new content\n" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
           if (seq === 2) return { content: null, toolCalls: [{ id: "u1", name: "undo_edit", arguments: { path: "app.tsx" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
           return { content: null, toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "Reverted" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
-        }
-      },
+        },
+      }),
     }));
 
     const { runImplementationAgent } = await import("../agents/implementation-agent.ts");
-    const result = await runImplementationAgent("gpt-4o", makeTask(), { text: "# Design", images: [] }, tmpPlan, tmpDir, undefined, "sys");
+    const result = await runImplementationAgent("gpt-4o", { type: "copilot" }, makeTask(), { text: "# Design", images: [] }, tmpPlan, tmpDir, undefined, "sys");
 
     expect(result.summary).toBe("Reverted");
     const content = await Bun.file(`${tmpDir}/app.tsx`).text();
@@ -396,20 +395,19 @@ describe("undo_edit tool", () => {
     await Bun.write(tmpPlan, `### Task 1: Undo test\n**Status**: pending\n**Description**: Test\n**Acceptance Criteria**: Done\n**Example Code**:\n\`\`\`\n\`\`\`\n`);
 
     let seq = 0;
-    mock.module("../llm/copilot-client.ts", () => ({
-      CopilotClient: class {
-        constructor(_model: string) {}
+    mock.module("../llm/create-client.ts", () => ({
+      createLLMClient: () => ({
         async chat() {
           seq++;
           if (seq === 1) return { content: null, toolCalls: [{ id: "r1", name: "replace_text", arguments: { path: "app.tsx", old_string: "original", new_string: "modified" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
           if (seq === 2) return { content: null, toolCalls: [{ id: "u1", name: "undo_edit", arguments: { path: "app.tsx" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
           return { content: null, toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "Reverted" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
-        }
-      },
+        },
+      }),
     }));
 
     const { runImplementationAgent } = await import("../agents/implementation-agent.ts");
-    await runImplementationAgent("gpt-4o", makeTask(), { text: "# Design", images: [] }, tmpPlan, tmpDir, undefined, "sys");
+    await runImplementationAgent("gpt-4o", { type: "copilot" }, makeTask(), { text: "# Design", images: [] }, tmpPlan, tmpDir, undefined, "sys");
 
     const content = await Bun.file(`${tmpDir}/app.tsx`).text();
     expect(content).toBe("const x = 'original';\n");
@@ -426,9 +424,8 @@ describe("undo_edit tool", () => {
 
     let seq = 0;
     let capturedToolResult = "";
-    mock.module("../llm/copilot-client.ts", () => ({
-      CopilotClient: class {
-        constructor(_model: string) {}
+    mock.module("../llm/create-client.ts", () => ({
+      createLLMClient: () => ({
         async chat(messages: unknown[]) {
           seq++;
           if (seq === 1) return { content: null, toolCalls: [{ id: "u1", name: "undo_edit", arguments: { path: "never-written-before.tsx" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
@@ -436,12 +433,12 @@ describe("undo_edit tool", () => {
           const toolMsg = msgs.findLast((m) => m.role === "tool");
           if (toolMsg) capturedToolResult = toolMsg.content;
           return { content: null, toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "Done" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
-        }
-      },
+        },
+      }),
     }));
 
     const { runImplementationAgent } = await import("../agents/implementation-agent.ts");
-    await runImplementationAgent("gpt-4o", makeTask(), { text: "# Design", images: [] }, tmpPlan, tmpDir, undefined, "sys");
+    await runImplementationAgent("gpt-4o", { type: "copilot" }, makeTask(), { text: "# Design", images: [] }, tmpPlan, tmpDir, undefined, "sys");
 
     expect(capturedToolResult).toContain("Error");
     expect(capturedToolResult).toContain("No backup");
@@ -453,8 +450,8 @@ describe("design text truncation", () => {
     let capturedUserContent: unknown = "";
     let seq = 0;
 
-    mock.module("../llm/copilot-client.ts", () => ({
-      CopilotClient: class {
+    mock.module("../llm/create-client.ts", () => ({
+      createLLMClient: () => ({
         async chat(messages: unknown[]) {
           seq++;
           if (seq === 1) {
@@ -465,8 +462,8 @@ describe("design text truncation", () => {
             return { content: null, toolCalls: [{ id: "w1", name: "write_file", arguments: { path: "t.html", content: "<h1>x</h1>" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
           }
           return { content: null, toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "Done" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
-        }
-      },
+        },
+      }),
     }));
 
     const tmpDir = `/tmp/design-trunc-${Date.now()}`;
@@ -476,7 +473,7 @@ describe("design text truncation", () => {
 
     const longDesign = "# Design\n" + "x".repeat(3000); // well above the 2000-char cap
     const { runImplementationAgent } = await import("../agents/implementation-agent.ts");
-    await runImplementationAgent("gpt-4o", { number: 1, title: "Build it", status: "pending", description: "Do the thing", acceptanceCriteria: "Done", exampleCode: "", raw: "" }, { text: longDesign, images: [] }, tmpPlan, tmpDir, undefined, "sys");
+    await runImplementationAgent("gpt-4o", { type: "copilot" }, { number: 1, title: "Build it", status: "pending", description: "Do the thing", acceptanceCriteria: "Done", exampleCode: "", raw: "" }, { text: longDesign, images: [] }, tmpPlan, tmpDir, undefined, "sys");
 
     const content = String(capturedUserContent);
     expect(content).toContain("truncated");
@@ -488,8 +485,8 @@ describe("design text truncation", () => {
     let capturedUserContent: unknown = "";
     let seq = 0;
 
-    mock.module("../llm/copilot-client.ts", () => ({
-      CopilotClient: class {
+    mock.module("../llm/create-client.ts", () => ({
+      createLLMClient: () => ({
         async chat(messages: unknown[]) {
           seq++;
           if (seq === 1) {
@@ -500,8 +497,8 @@ describe("design text truncation", () => {
             return { content: null, toolCalls: [{ id: "w1", name: "write_file", arguments: { path: "u.html", content: "<h1>y</h1>" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
           }
           return { content: null, toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "Done" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
-        }
-      },
+        },
+      }),
     }));
 
     const tmpDir = `/tmp/design-notrunc-${Date.now()}`;
@@ -511,7 +508,7 @@ describe("design text truncation", () => {
 
     const shortDesign = "# Design\nThis is a short design document.";
     const { runImplementationAgent } = await import("../agents/implementation-agent.ts");
-    await runImplementationAgent("gpt-4o", { number: 1, title: "Build it", status: "pending", description: "Do the thing", acceptanceCriteria: "Done", exampleCode: "", raw: "" }, { text: shortDesign, images: [] }, tmpPlan, tmpDir, undefined, "sys");
+    await runImplementationAgent("gpt-4o", { type: "copilot" }, { number: 1, title: "Build it", status: "pending", description: "Do the thing", acceptanceCriteria: "Done", exampleCode: "", raw: "" }, { text: shortDesign, images: [] }, tmpPlan, tmpDir, undefined, "sys");
 
     const content = String(capturedUserContent);
     expect(content).toContain("This is a short design document.");
@@ -524,8 +521,8 @@ describe("run_command output truncation", () => {
     let capturedToolResult: unknown = "";
     let seq = 0;
 
-    mock.module("../llm/copilot-client.ts", () => ({
-      CopilotClient: class {
+    mock.module("../llm/create-client.ts", () => ({
+      createLLMClient: () => ({
         async chat(messages: unknown[]) {
           seq++;
           if (seq === 1) {
@@ -539,8 +536,8 @@ describe("run_command output truncation", () => {
             return { content: null, toolCalls: [{ id: "w1", name: "write_file", arguments: { path: "v.html", content: "<h1>z</h1>" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
           }
           return { content: null, toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "Done" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
-        }
-      },
+        },
+      }),
     }));
 
     const tmpDir = `/tmp/cmd-trunc-${Date.now()}`;
@@ -549,7 +546,7 @@ describe("run_command output truncation", () => {
     await Bun.write(tmpPlan, `### Task 1: Build it\n**Status**: pending\n**Description**: Run a command\n**Acceptance Criteria**: Done\n**Example Code**:\n\`\`\`\n\`\`\`\n`);
 
     const { runImplementationAgent } = await import("../agents/implementation-agent.ts");
-    await runImplementationAgent("gpt-4o", { number: 1, title: "Build it", status: "pending", description: "Run a command", acceptanceCriteria: "Done", exampleCode: "", raw: "" }, { text: "# Design", images: [] }, tmpPlan, tmpDir, undefined, "sys");
+    await runImplementationAgent("gpt-4o", { type: "copilot" }, { number: 1, title: "Build it", status: "pending", description: "Run a command", acceptanceCriteria: "Done", exampleCode: "", raw: "" }, { text: "# Design", images: [] }, tmpPlan, tmpDir, undefined, "sys");
 
     // seq 1 output is ~1774 chars for "seq 1 500"; use "seq 1 1000" for > 2000
     // The result should contain a truncation marker when stdout > 2000 chars
@@ -562,8 +559,8 @@ describe("run_command output truncation", () => {
     let capturedToolResult = "";
     let seq = 0;
 
-    mock.module("../llm/copilot-client.ts", () => ({
-      CopilotClient: class {
+    mock.module("../llm/create-client.ts", () => ({
+      createLLMClient: () => ({
         async chat(messages: unknown[]) {
           seq++;
           if (seq === 1) {
@@ -576,8 +573,8 @@ describe("run_command output truncation", () => {
             return { content: null, toolCalls: [{ id: "w1", name: "write_file", arguments: { path: "w.html", content: "<h1>w</h1>" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
           }
           return { content: null, toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "Done" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
-        }
-      },
+        },
+      }),
     }));
 
     const tmpDir = `/tmp/cmd-tail-${Date.now()}`;
@@ -586,7 +583,7 @@ describe("run_command output truncation", () => {
     await Bun.write(tmpPlan, `### Task 1: Build it\n**Status**: pending\n**Description**: Run\n**Acceptance Criteria**: Done\n**Example Code**:\n\`\`\`\n\`\`\`\n`);
 
     const { runImplementationAgent } = await import("../agents/implementation-agent.ts");
-    await runImplementationAgent("gpt-4o", { number: 1, title: "Build it", status: "pending", description: "Run", acceptanceCriteria: "Done", exampleCode: "", raw: "" }, { text: "# Design", images: [] }, tmpPlan, tmpDir, undefined, "sys");
+    await runImplementationAgent("gpt-4o", { type: "copilot" }, { number: 1, title: "Build it", status: "pending", description: "Run", acceptanceCriteria: "Done", exampleCode: "", raw: "" }, { text: "# Design", images: [] }, tmpPlan, tmpDir, undefined, "sys");
 
     // stdout truncated to tail → must contain "1000" (last line)
     expect(capturedToolResult).toContain("1000");
@@ -611,20 +608,20 @@ describe("agent path normalization", () => {
     const agentPath = `${relFromCwd}/src/main.tsx`;
 
     let seq = 0;
-    mock.module("../llm/copilot-client.ts", () => ({
-      CopilotClient: class {
+    mock.module("../llm/create-client.ts", () => ({
+      createLLMClient: () => ({
         async chat() {
           seq++;
           if (seq === 1) {
             return { content: null, toolCalls: [{ id: "w1", name: "write_file", arguments: { path: agentPath, content: "// main" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
           }
           return { content: null, toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "Done" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
-        }
-      },
+        },
+      }),
     }));
 
     const { runImplementationAgent } = await import("../agents/implementation-agent.ts");
-    await runImplementationAgent("gpt-4o", { number: 1, title: "Scaffold", status: "pending", description: "Create file", acceptanceCriteria: "Done", exampleCode: "", raw: "" }, { text: "# Design", images: [] }, tmpPlan, tmpDir, undefined, "sys");
+    await runImplementationAgent("gpt-4o", { type: "copilot" }, { number: 1, title: "Scaffold", status: "pending", description: "Create file", acceptanceCriteria: "Done", exampleCode: "", raw: "" }, { text: "# Design", images: [] }, tmpPlan, tmpDir, undefined, "sys");
 
     // File should be at tmpDir/src/main.tsx, NOT at tmpDir/<prefix>/src/main.tsx
     const correctFile = Bun.file(`${tmpDir}/src/main.tsx`);

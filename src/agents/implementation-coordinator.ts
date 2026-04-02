@@ -4,6 +4,7 @@ import { runImplementationAgent } from "./implementation-agent.ts";
 import { type DesignContent } from "../design/design-loader.ts";
 import { findBrokenReferences } from "../validation/reference-checker.ts";
 import type { PlanTask } from "../plan/types.ts";
+import type { ProviderConfig } from "../llm/provider.ts";
 import chalk from "chalk";
 import * as path from "node:path";
 import * as fs from "node:fs/promises";
@@ -85,6 +86,7 @@ async function buildProjectContext(planFile: string, outputDir: string, memoryFi
 
 export async function runImplementationCoordinator(
   model: string,
+  providerConfig: ProviderConfig,
   design: DesignContent,
   planFile: string,
   memoryFile: string,
@@ -118,6 +120,7 @@ export async function runImplementationCoordinator(
 
     const result = await runImplementationAgent(
       model,
+      providerConfig,
       nextTask,
       taskDesign,
       planFile,
@@ -180,6 +183,7 @@ export async function runImplementationCoordinator(
     const repairContext = await buildProjectContext(planFile, outputDir, memoryFile);
     const repairResult = await runImplementationAgent(
       model,
+      providerConfig,
       repairTask,
       { ...design, images: [] }, // no images needed for a repair pass
       planFile,

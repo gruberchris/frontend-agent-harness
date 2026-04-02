@@ -13,11 +13,10 @@ afterEach(async () => {
   trackedFiles.length = 0;
 });
 
-// Mock CopilotClient so the real implementation agent completes:
+// Mock createLLMClient so the real implementation agent completes:
 // odd-numbered calls write a file; even-numbered calls mark complete
-mock.module("../llm/copilot-client.ts", () => ({
-  CopilotClient: class MockCopilotClient {
-    constructor(_model: string) {}
+mock.module("../llm/create-client.ts", () => ({
+  createLLMClient: () => ({
     async chat(_messages: unknown[], _tools?: unknown[]) {
       // Capture the first user message to inspect injected context
       const msgs = _messages as Array<{ role: string; content: string }>;
@@ -25,7 +24,6 @@ mock.module("../llm/copilot-client.ts", () => ({
       if (userMsg) capturedContextArg = userMsg.content;
       coordMockCallCount++;
       if (coordMockCallCount % 2 === 1) {
-        // Write a file first so the guard is satisfied
         return {
           content: null,
           toolCalls: [
@@ -43,8 +41,8 @@ mock.module("../llm/copilot-client.ts", () => ({
         usage: { promptTokens: 30, completionTokens: 20, totalTokens: 50 },
         finishReason: "tool_calls",
       };
-    }
-  },
+    },
+  }),
 }));
 
 afterAll(() => mock.restore());
@@ -92,6 +90,7 @@ describe("runImplementationCoordinator", () => {
     const { runImplementationCoordinator } = await import("../agents/implementation-coordinator.ts");
     const result = await runImplementationCoordinator(
       "gpt-4o",
+      { type: "copilot" },
       { text: "# Design", images: [] },
       tmpPlanFile,
       tmpMemoryFile,
@@ -112,7 +111,7 @@ describe("runImplementationCoordinator", () => {
     await Bun.write(tmpPlanFile, MULTI_TASK_PLAN);
 
     const { runImplementationCoordinator } = await import("../agents/implementation-coordinator.ts");
-    await runImplementationCoordinator("gpt-4o", { text: "# Design", images: [] }, tmpPlanFile, tmpMemoryFile, tmpOutputDir, "You are a coordinator.");
+    await runImplementationCoordinator("gpt-4o", { type: "copilot" }, { text: "# Design", images: [] }, tmpPlanFile, tmpMemoryFile, tmpOutputDir, "You are a coordinator.");
 
     expect(capturedContextArg).toBeDefined();
     expect(capturedContextArg!).toContain("Project Context");
@@ -134,6 +133,7 @@ describe("runImplementationCoordinator", () => {
     const { runImplementationCoordinator } = await import("../agents/implementation-coordinator.ts");
     const result = await runImplementationCoordinator(
       "gpt-4o",
+      { type: "copilot" },
       { text: "# Design", images: [] },
       tmpPlanFile,
       tmpMemoryFile,
@@ -158,6 +158,7 @@ describe("runImplementationCoordinator", () => {
     const { runImplementationCoordinator } = await import("../agents/implementation-coordinator.ts");
     const result = await runImplementationCoordinator(
       "gpt-4o",
+      { type: "copilot" },
       { text: "# Design", images: [] },
       tmpPlanFile,
       tmpMemoryFile,
@@ -180,11 +181,10 @@ describe("design image stripping", () => {
     const contentTypes: ("array" | "string")[] = [];
     let seq = 0;
 
-    mock.module("../llm/copilot-client.ts", () => ({
-      CopilotClient: class {
+    mock.module("../llm/create-client.ts", () => ({
+      createLLMClient: () => ({
         async chat(messages: unknown[]) {
           seq++;
-          // Capture user message content on the first LLM call per task (odd seq = first call)
           if (seq % 2 === 1) {
             const msgs = messages as Array<{ role: string; content: unknown }>;
             const userMsg = msgs.find((m) => m.role === "user");
@@ -194,8 +194,8 @@ describe("design image stripping", () => {
             return { content: null, toolCalls: [{ id: "w1", name: "write_file", arguments: { path: "f.html", content: "<h1>x</h1>" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
           }
           return { content: null, toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "done" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
-        }
-      },
+        },
+      }),
     }));
 
     const tmpPlan = `/tmp/img-strip-plan-${Date.now()}.md`;
@@ -205,7 +205,7 @@ describe("design image stripping", () => {
     await Bun.write(tmpPlan, makePlan("Project Scaffold", "Add routing"));
 
     const { runImplementationCoordinator } = await import("../agents/implementation-coordinator.ts");
-    await runImplementationCoordinator("gpt-4o", { text: "# Design", images: [fakeImage] }, tmpPlan, tmpMemory, tmpOutput, "sys");
+    await runImplementationCoordinator("gpt-4o", { type: "copilot" }, { text: "# Design", images: [fakeImage] }, tmpPlan, tmpMemory, tmpOutput, "sys");
 
     expect(contentTypes[0]).toBe("array");  // task 1: images included
     expect(contentTypes[1]).toBe("string"); // task 2: images stripped
@@ -215,8 +215,8 @@ describe("design image stripping", () => {
     const contentTypes: ("array" | "string")[] = [];
     let seq = 0;
 
-    mock.module("../llm/copilot-client.ts", () => ({
-      CopilotClient: class {
+    mock.module("../llm/create-client.ts", () => ({
+      createLLMClient: () => ({
         async chat(messages: unknown[]) {
           seq++;
           if (seq % 2 === 1) {
@@ -228,8 +228,8 @@ describe("design image stripping", () => {
             return { content: null, toolCalls: [{ id: "w1", name: "write_file", arguments: { path: "g.html", content: "<h1>y</h1>" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
           }
           return { content: null, toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "done" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
-        }
-      },
+        },
+      }),
     }));
 
     const tmpPlan = `/tmp/img-ui-plan-${Date.now()}.md`;
@@ -240,7 +240,7 @@ describe("design image stripping", () => {
     await Bun.write(tmpPlan, makePlan("Project Scaffold", "Style the UI components"));
 
     const { runImplementationCoordinator } = await import("../agents/implementation-coordinator.ts");
-    await runImplementationCoordinator("gpt-4o", { text: "# Design", images: [fakeImage] }, tmpPlan, tmpMemory, tmpOutput, "sys");
+    await runImplementationCoordinator("gpt-4o", { type: "copilot" }, { text: "# Design", images: [fakeImage] }, tmpPlan, tmpMemory, tmpOutput, "sys");
 
     expect(contentTypes[0]).toBe("array"); // task 1: images included
     expect(contentTypes[1]).toBe("array"); // task 2: "Style" → UI task, images kept

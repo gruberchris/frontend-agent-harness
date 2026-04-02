@@ -11,7 +11,7 @@ afterEach(async () => {
   trackedFiles.length = 0;
 });
 
-// Mock the CopilotClient to avoid real API calls
+// Mock createLLMClient to avoid real API calls
 const mockChatFn = mock(async (messages: unknown[]) => {
   lastChatCallMessages = messages as Array<{ role: string; content: string | null }>;
   return {
@@ -22,11 +22,8 @@ const mockChatFn = mock(async (messages: unknown[]) => {
   };
 });
 
-mock.module("../llm/copilot-client.ts", () => ({
-  CopilotClient: class MockCopilotClient {
-    constructor(_model: string) {}
-    chat = mockChatFn;
-  },
+mock.module("../llm/create-client.ts", () => ({
+  createLLMClient: () => ({ chat: mockChatFn }),
 }));
 
 function generateMockPlan(): string {
@@ -60,7 +57,7 @@ describe("runTaskAgent", () => {
     trackedFiles.push(tmpPlanFile, tmpMemoryFile);
     const systemPrompt = "You are an expert software architect.";
 
-    const result = await runTaskAgent("gpt-4o", { text: "# My App\n\nA todo app with React.", images: [] }, tmpPlanFile, tmpMemoryFile, systemPrompt);
+    const result = await runTaskAgent("gpt-4o", { type: "copilot" }, { text: "# My App\n\nA todo app with React.", images: [] }, tmpPlanFile, tmpMemoryFile, systemPrompt);
 
     expect(result.planContent).toContain("Task 1");
     expect(result.planContent).toContain("pending");
@@ -78,7 +75,7 @@ describe("runTaskAgent", () => {
     const tmpMemoryFile = `/tmp/task-agent-memory-${Date.now()}.md`;
     trackedFiles.push(tmpPlanFile, tmpMemoryFile);
 
-    const result = await runTaskAgent("gpt-4o", { text: "Simple design", images: [] }, tmpPlanFile, tmpMemoryFile, "You are an architect.");
+    const result = await runTaskAgent("gpt-4o", { type: "copilot" }, { text: "Simple design", images: [] }, tmpPlanFile, tmpMemoryFile, "You are an architect.");
     expect(result.usage.totalTokens).toBeGreaterThan(0);
   });
 
@@ -90,10 +87,11 @@ describe("runTaskAgent", () => {
     trackedFiles.push(tmpPlanFile, tmpMemoryFile);
     const customPrompt = "You are a specialist in React applications.";
 
-    await runTaskAgent("gpt-4o", { text: "# My App", images: [] }, tmpPlanFile, tmpMemoryFile, customPrompt);
+    await runTaskAgent("gpt-4o", { type: "copilot" }, { text: "# My App", images: [] }, tmpPlanFile, tmpMemoryFile, customPrompt);
 
     const systemMsg = lastChatCallMessages.find((m) => m.role === "system");
     expect(systemMsg).toBeDefined();
     expect(systemMsg!.content).toBe(customPrompt);
   });
 });
+

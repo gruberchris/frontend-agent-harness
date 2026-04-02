@@ -1,4 +1,5 @@
-import { CopilotClient } from "../llm/copilot-client.ts";
+import { createLLMClient } from "../llm/create-client.ts";
+import type { ProviderConfig } from "../llm/provider.ts";
 import { addTokenUsage, emptyTokenUsage, type TokenUsage } from "../llm/types.ts";
 import type { LLMMessage, ToolDefinition } from "../llm/types.ts";
 import { updateTaskStatus } from "../plan/plan-parser.ts";
@@ -150,6 +151,7 @@ export interface ImplementationAgentResult {
 
 export async function runImplementationAgent(
   model: string,
+  providerConfig: ProviderConfig,
   task: PlanTask,
   design: DesignContent,
   planFile: string,
@@ -160,7 +162,7 @@ export async function runImplementationAgent(
   maxTokens?: number,
   maxToolCallIterations = 20,
 ): Promise<ImplementationAgentResult> {
-  const client = new CopilotClient(model, reasoningEffort, maxTokens);
+  const client = createLLMClient(providerConfig, model, reasoningEffort, maxTokens);
   let usage = emptyTokenUsage();
 
   const absOutputDir = path.resolve(outputDir);

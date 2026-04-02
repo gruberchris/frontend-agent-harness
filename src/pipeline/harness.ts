@@ -83,6 +83,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
 
   const taskResult = await runTaskAgent(
     config.agents.taskAgent.model,
+    config.provider,
     design,
     config.planFile,
     config.memoryFile,
@@ -112,6 +113,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
     // ── Step 2: Implementation Coordinator ──────────────────────────────────
     const coordResult = await runImplementationCoordinator(
       config.agents.implementationAgent.model,
+      config.provider,
       design, // re-use loaded design (images already in memory)
       config.planFile,
       config.memoryFile,
@@ -154,6 +156,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
 
     const evalResult = await runEvaluatorAgent(
       config.agents.evaluatorAgent.model,
+      config.provider,
       appUrl,
       currentDesign,
       config.planFile,
@@ -202,6 +205,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
 
     const reTaskResult = await runTaskAgent(
       config.agents.taskAgent.model,
+      config.provider,
       design, // re-use same loaded design (design.md is kept pristine)
       config.planFile,
       config.memoryFile,

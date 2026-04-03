@@ -38,7 +38,7 @@ const DECISION_TOOLS: ToolDefinition[] = [
   },
   {
     name: "decide_needs_work",
-    description: "The application has significant discrepancies from the design. Call this ONLY after you have explored ALL tabs, states, and features. List what needs fixing.",
+    description: "The application has significant discrepancies from the design, OR the page is blank/broken/unloadable. Call this immediately if the page did not load. Otherwise, call after exploring the visible UI.",
     parameters: {
       type: "object",
       properties: {
@@ -120,6 +120,11 @@ Use the available Playwright tools to navigate to the application, explore its f
   let corrections = "";
   let decided = false;
 
+  // Loop detection: track the last N tool call signatures across all turns
+  const recentCallSigs: string[] = [];
+  const LOOP_WINDOW = 10;
+  const LOOP_THRESHOLD = 3; // same sig this many times in window = loop
+
   // Tool-calling loop
   for (let i = 0; i < maxToolCallIterations; i++) {
     const iterationsLeft = maxToolCallIterations - i - 1;
@@ -146,10 +151,9 @@ Use the available Playwright tools to navigate to the application, explore its f
       const msg = response.content?.trim();
       if (msg) console.log(`    💬 Evaluator narrated: "${msg.slice(0, 200)}"`);
       if (iterationsLeft > 0) {
-        // Nudge: don't give up, keep exploring
         messages.push({
           role: "user",
-          content: `You responded with text but no tool calls. Do NOT call decide_needs_work just because you want to explore more — use Playwright to do it NOW. You have ${iterationsLeft} steps left.\n\nIf you have genuinely finished evaluating ALL tabs and features, call decide_pass or decide_needs_work immediately. Otherwise, use a Playwright tool to continue exploring.`,
+          content: `You responded with text but no tool calls. You have ${iterationsLeft} steps left. Call decide_pass or decide_needs_work immediately if you have finished evaluating. Otherwise use a Playwright tool to continue.`,
         });
         continue;
       }
@@ -160,6 +164,7 @@ Use the available Playwright tools to navigate to the application, explore its f
 
     decided = false;
     const collectedImages: MessageContentPart[] = [];
+    let loopDetectedThisTurn = false;
 
     for (const toolCall of response.toolCalls) {
       if (toolCall.name === "decide_pass") {
@@ -183,6 +188,33 @@ Use the available Playwright tools to navigate to the application, explore its f
         });
       } else {
         // Execute Playwright MCP tool
+
+        // ── Loop detection ────────────────────────────────────────────────────
+        // Detect [object Object] refs (invalid — blank page or serialization bug)
+        const isInvalidRef = toolCall.arguments["ref"] === "[object Object]";
+
+        // Track call signature in rolling window
+        const callSig = `${toolCall.name}:${JSON.stringify(toolCall.arguments)}`;
+        recentCallSigs.push(callSig);
+        if (recentCallSigs.length > LOOP_WINDOW) recentCallSigs.shift();
+        const sigRepeatCount = recentCallSigs.filter(s => s === callSig).length;
+        const isLooping = sigRepeatCount >= LOOP_THRESHOLD;
+
+        if (isInvalidRef || isLooping) {
+          const reason = isInvalidRef
+            ? `"[object Object]" is not a valid element ref — the page is likely blank or the snapshot returned no elements`
+            : `"${toolCall.name}" has been called with identical arguments ${sigRepeatCount} times — stuck in a loop`;
+          console.log(`    ⚠️  Evaluator loop: ${reason}`);
+          messages.push({
+            role: "tool",
+            content: `Error: ${reason}. Stop repeating this call. If the page is blank or broken, call decide_needs_work immediately.`,
+            toolCallId: toolCall.id,
+          });
+          loopDetectedThisTurn = true;
+          continue;
+        }
+        // ─────────────────────────────────────────────────────────────────────
+
         console.log(`    🌐 ${toolCall.name}(${JSON.stringify(toolCall.arguments).slice(0, 80)})`);
         if (!playwright) {
           messages.push({
@@ -245,6 +277,14 @@ Use the available Playwright tools to navigate to the application, explore its f
           { type: "text", text: "Screenshots from previous actions:" },
           ...collectedImages,
         ],
+      });
+    }
+
+    // 4. If a loop was detected this turn, demand a decision on the next turn
+    if (loopDetectedThisTurn && !decided) {
+      messages.push({
+        role: "user",
+        content: `⚠️ You are stuck in a loop — repeated identical tool calls were detected and blocked. The page is likely blank or broken. Call decide_needs_work NOW with a description of what you observed and specific corrections for the implementation agent. Do not make any more Playwright tool calls.`,
       });
     }
 

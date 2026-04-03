@@ -5,6 +5,7 @@ import { startDevServer } from "../server/dev-server.ts";
 import { printReport, type AgentStepStats, type PipelineReport } from "./reporting.ts";
 import { addTokenUsage, emptyTokenUsage } from "../llm/types.ts";
 import { loadDesignContent } from "../design/design-loader.ts";
+import { readTasks } from "../plan/plan-parser.ts";
 import type { HarnessConfig } from "../config.ts";
 import chalk from "chalk";
 import * as fs from "node:fs/promises";
@@ -210,15 +211,20 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
       break;
     }
 
-    // ── Re-run Task Agent with evaluator feedback ─────────────────────────────
-    console.log(chalk.bold(`\n🔄 Re-running Task Agent with evaluator feedback...`));
+    // ── Re-run Task Agent in correction mode ─────────────────────────────────
+    // Append targeted correction tasks to the EXISTING plan instead of replacing
+    // it. This preserves all completed work — only the new failing issues get
+    // new pending tasks that the coordinator will pick up.
+    console.log(chalk.bold(`\n🔄 Appending correction tasks based on evaluator feedback...`));
 
+    const existingTasks = await readTasks(config.planFile);
+    const nextTaskNumber = (existingTasks.length > 0 ? Math.max(...existingTasks.map((t) => t.number)) : 0) + 1;
     const existingFileTree = await readFileTree(path.resolve(config.appDir));
 
     const reTaskResult = await runTaskAgent(
       config.agents.taskAgent.model,
       config.provider,
-      design, // re-use same loaded design (design.md is kept pristine)
+      design,
       config.planFile,
       config.memoryFile,
       config.agents.taskAgent.systemPrompt,
@@ -226,10 +232,12 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
       config.agents.taskAgent.maxTokens,
       existingFileTree,
       config.llmTimeoutSecs,
+      true, // correctionMode — appends tasks instead of replacing the plan
+      nextTaskNumber,
     );
     taskAgentUsage = addTokenUsage(taskAgentUsage, reTaskResult.usage);
     taskAgentCalls++;
-    console.log(chalk.green(`✅ New plan.md generated for iteration ${iteration + 1}`));
+    console.log(chalk.green(`✅ Correction tasks appended to plan.md (starting at Task ${nextTaskNumber})`));
   }
 
   // ── Cleanup ──────────────────────────────────────────────────────────────────

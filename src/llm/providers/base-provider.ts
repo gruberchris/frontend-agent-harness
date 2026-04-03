@@ -19,13 +19,15 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
   protected readonly maxTokensParamName: string = "max_tokens";
 
   protected parallelToolCalls?: boolean;
+  protected frequencyPenalty?: number;
 
-  constructor(model: string, reasoningEffort?: string, maxTokens?: number, llmTimeoutSecs?: number, parallelToolCalls?: boolean) {
+  constructor(model: string, reasoningEffort?: string, maxTokens?: number, llmTimeoutSecs?: number, parallelToolCalls?: boolean, frequencyPenalty?: number) {
     this.model = model;
     this.reasoningEffort = reasoningEffort;
     this.maxTokens = maxTokens;
     this.llmTimeoutMs = llmTimeoutSecs !== undefined ? llmTimeoutSecs * 1000 : undefined;
     this.parallelToolCalls = parallelToolCalls;
+    this.frequencyPenalty = frequencyPenalty;
   }
 
   protected abstract initClient(): Promise<void>;
@@ -104,6 +106,7 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
         tools: openaiTools,
         tool_choice: openaiTools ? "auto" : undefined,
         ...(this.parallelToolCalls === false && { parallel_tool_calls: false }),
+        ...(this.frequencyPenalty !== undefined && { frequency_penalty: this.frequencyPenalty }),
         ...(this.supportsReasoningEffort && this.reasoningEffort && {
           reasoning_effort: this.reasoningEffort as "low" | "medium" | "high",
         }),

@@ -16,8 +16,9 @@ export class AzureProvider extends OpenAICompatibleProvider {
     maxTokens?: number,
     llmTimeoutSecs?: number,
     parallelToolCalls?: boolean,
+    frequencyPenalty?: number,
   ) {
-    super(model, reasoningEffort, maxTokens, llmTimeoutSecs, parallelToolCalls);
+    super(model, reasoningEffort, maxTokens, llmTimeoutSecs, parallelToolCalls, frequencyPenalty);
     this.endpoint = endpoint;
     this.apiVersion = apiVersion;
   }

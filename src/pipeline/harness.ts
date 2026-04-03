@@ -138,6 +138,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
       config.historyTrimThreshold,
       config.historyTrimKeep,
       config.agents.implementationAgent.parallelToolCalls,
+      config.agents.implementationAgent.frequencyPenalty,
     );
     implCoordUsage = addTokenUsage(implCoordUsage, coordResult.usage);
     implCoordCalls += coordResult.tasksCompleted;

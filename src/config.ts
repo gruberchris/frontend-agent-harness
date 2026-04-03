@@ -12,6 +12,8 @@ const AgentConfigSchema = z.object({
   contextWindow: z.number().int().min(1024).optional(),
   /** When false, disables parallel tool calling so the model makes one tool call per response. Recommended for small-context models that generate runaway batches. */
   parallelToolCalls: z.boolean().optional(),
+  /** Penalises repeated tokens in the generated output (-2.0 to 2.0). Use ~0.3 with Gemma/local models to suppress within-response tool-call spam. */
+  frequencyPenalty: z.number().min(-2).max(2).optional(),
 });
 
 export const HarnessConfigSchema = z.object({

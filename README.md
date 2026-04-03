@@ -174,12 +174,14 @@ Each of the four agents (`taskAgent`, `implementationCoordinator`, `implementati
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `model` | string | yes | Model name/deployment to use for this agent |
-| `systemPrompt` | string | yes | System prompt sent to the model; overrides the built-in default |
+| `systemPrompt` | string | yes | System prompt sent to the model |
 | `reasoningEffort` | `"none"` \| `"minimal"` \| `"low"` \| `"medium"` \| `"high"` \| `"xhigh"` | no | Reasoning effort passed to the model (o-series / thinking models only); ignored by providers that don't support it |
 | `maxTokens` | integer ≥ 256 | no | Maximum completion tokens for this agent's responses. Auto-derived from `contextWindow` if not set. |
 | `contextWindow` | integer ≥ 1024 | no | Model's context window size in tokens. When set, automatically derives `maxTokens` and (for `implementationAgent`) the three context-tuning params below. |
+| `parallelToolCalls` | boolean | no | When `false`, sends `parallel_tool_calls: false` to the API so the model makes one tool call per response. Recommended for local models (Gemma, Qwen, etc.) that generate runaway parallel batches. |
+| `frequencyPenalty` | number (-2.0 to 2.0) | no | Penalises repeated tokens within a single response. Use `0.3` with local models that spam identical tool calls (e.g. 40× `list_directory` in one response) before the harness can intervene. **Not recommended for cloud models** (GPT-4o, Claude, etc.) that don't exhibit this behaviour, and may cause API errors with o-series reasoning models. |
 
-**Example — override just the model and add reasoning effort:**
+**Example — reasoning model with high effort:**
 
 ```json
 {
@@ -189,6 +191,21 @@ Each of the four agents (`taskAgent`, `implementationCoordinator`, `implementati
       "systemPrompt": "You are a coding implementation agent...",
       "reasoningEffort": "high",
       "maxTokens": 32768
+    }
+  }
+}
+```
+
+**Example — local model with anti-spam settings:**
+
+```json
+{
+  "agents": {
+    "implementationAgent": {
+      "model": "gemma-4-26b-a4b-it",
+      "contextWindow": 12288,
+      "parallelToolCalls": false,
+      "frequencyPenalty": 0.3
     }
   }
 }
@@ -291,15 +308,31 @@ Runs models locally via [LM Studio](https://lmstudio.ai). No API key needed.
 
 `baseUrl` is optional — defaults to `http://localhost:1234`. `reasoningEffort` is ignored for LM Studio.
 
+**Recommended extra settings for local models** (Gemma, Qwen, Mistral, etc.) that tend to spam repeated tool calls within a single response:
+
+```json
+{
+  "agents": {
+    "implementationAgent": {
+      "parallelToolCalls": false,
+      "frequencyPenalty": 0.3
+    }
+  }
+}
+```
+
+`parallelToolCalls: false` enforces one tool call per turn at the API level. `frequencyPenalty: 0.3` discourages the model from generating dozens of identical tool calls within a single response (a known issue with Gemma 4 and similar MoE models). Remove or omit `frequencyPenalty` if you switch to a cloud provider — it is unnecessary and may cause errors with o-series models.
+
 ---
 
 ## Key Features & Optimizations
 
 ### 🛡️ Stability & Resilience
 - **Robust Parsing**: Task status updates in `plan.md` use line-by-line parsing rather than fragile regex, ensuring the state is never corrupted.
-- **Fail-Fast Polling**: The dev server health-check loop detects if the process crashes immediately (e.g., due to a syntax error) and fails fast instead of hanging.
+- **Dev Server Health Check**: The harness polls the dev server for up to 30 seconds after starting it. If the process never responds with HTTP 200 (e.g. due to a crash or a port conflict), the pipeline falls back to text-only evaluation and feeds the error back to the Task Agent for correction.
 - **Process Cleanup**: Global process management ensures all subprocesses (Vite, Playwright) are killed gracefully on `SIGINT` or crash.
-- **Loop Detection**: The implementation agent automatically detects and breaks out of infinite tool-calling loops.
+- **Loop Detection**: The implementation agent detects and breaks infinite tool-calling loops using two strategies: (1) per-call repeat count — fires after the same tool+args is called more than twice; (2) sliding-window batch pattern — catches A→B→A→B cycles. When a loop is detected, a `user`-role correction message is injected (stronger signal than a `tool` error) along with specific recovery instructions.
+- **Within-Response Deduplication**: When a local model generates dozens of identical tool calls in a single response (before the harness can intervene), the harness collapses them to one execution and returns a cached result for the rest — preventing context flooding and wasted tokens.
 - **Gitignore**: The implementation agent always creates a `.gitignore` in the generated app root (with `node_modules`, `dist`, etc.) but never runs `git init`.
 
 ### ⚡ Efficiency & Token Savings
@@ -346,7 +379,7 @@ The Task Agent generates `output/plan.md` with a **header block** (tech stack + 
 
 ### Implementation Agent
 - Has access to: `read_file`, `write_file`, `replace_text`, `undo_edit`, `glob`, `grep_search`, `view_code_symbols`, `read_url`, `list_directory`, `run_command`, `mark_task_complete`.
-- **Loop Limit**: If the agent hits the tool-call limit (default 20) without marking the task complete, the task is left as `in_progress` and reported as a failure, preventing incorrect "completed" states.
+- **Loop Limit**: If the agent hits `maxToolCallIterations` (default 20, configurable) without marking the task complete, the task is left as `in_progress` and reported as a failure, preventing incorrect "completed" states.
 
 ### Evaluator Agent
 - Auto-starts a Bun dev server in `./output/app/`.

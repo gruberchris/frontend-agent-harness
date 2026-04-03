@@ -169,8 +169,9 @@ export async function runImplementationAgent(
   historyTrimKeep = 15,
   /** When false, passes parallel_tool_calls=false to the API to force one tool call per response. */
   parallelToolCalls?: boolean,
+  frequencyPenalty?: number,
 ): Promise<ImplementationAgentResult> {
-  const client = createLLMClient(providerConfig, model, reasoningEffort, maxTokens, llmTimeoutSecs, parallelToolCalls);
+  const client = createLLMClient(providerConfig, model, reasoningEffort, maxTokens, llmTimeoutSecs, parallelToolCalls, frequencyPenalty);
   let usage = emptyTokenUsage();
 
   const absOutputDir = path.resolve(outputDir);
@@ -209,7 +210,7 @@ export async function runImplementationAgent(
   //      (robust to the model varying batch size between 1 and N per response)
   //   2. Sliding-window batch: catches A→B→A→B→A→B patterns across responses
   const callCounts = new Map<string, number>(); // individual tool+args → total calls
-  const MAX_INDIVIDUAL_REPEATS = 3;
+  const MAX_INDIVIDUAL_REPEATS = 2;
   const recentSignatures: string[] = [];
   const LOOP_WINDOW = 12; // signatures to keep
   const CYCLE_LENGTHS = [1, 2, 3]; // detect cycles of these lengths
@@ -322,12 +323,15 @@ export async function runImplementationAgent(
 
     if (overusedCall || detectedCycleLength > 0) {
       const isReplaceText = uniqueCalls.every(({ tc }) => tc.name === "replace_text");
+      const isReadFile = uniqueCalls.every(({ tc }) => tc.name === "read_file");
       const loopDesc = overusedCall
         ? `${overusedCall.tc.name} called ${callCounts.get(overusedCall.sig)} times`
         : detectedCycleLength === 1 ? "the exact same tool call batch" : `a ${detectedCycleLength}-step cycle of tool calls`;
       const suggestion = isReplaceText
-        ? " You are repeatedly failing to match text in replace_text. The error response includes the actual file contents — use write_file to rewrite the entire file instead."
-        : " Break out by trying a completely different approach, skipping the failing step, or calling mark_task_complete if the core work is done.";
+        ? "STOP. Do not call replace_text again. The file content has changed — your old_string no longer matches. Call write_file NOW with the complete new file content."
+        : isReadFile
+        ? "STOP reading files. You have already read these files. Make a decision: call write_file to update a file, or call mark_task_complete if the work is done."
+        : "STOP repeating these calls. Make a decision: call write_file to update a file, or call mark_task_complete if the core work is done.";
       // Reply to every tool call in the batch (API requirement), but use a one-liner for duplicates.
       const seenInLoop = new Set<string>();
       for (const { tc, sig } of annotated) {
@@ -336,11 +340,17 @@ export async function runImplementationAgent(
         messages.push({
           role: "tool",
           content: isFirstForSig
-            ? `Error: Loop detected — ${loopDesc}.${suggestion}`
+            ? `Error: Loop detected — ${loopDesc}. ${suggestion}`
             : `Error: Duplicate of a looped call.`,
           toolCallId: tc.id,
         });
       }
+      // Inject a user-role message — stronger signal than tool messages for Gemma-family models.
+      const iterationsLeft = maxToolCallIterations - i - 1;
+      messages.push({
+        role: "user",
+        content: `⚠️ LOOP DETECTED (${loopDesc}). ${suggestion} You have ${iterationsLeft} iteration(s) remaining.`,
+      });
       interceptedLoop = true;
       console.log(`    ⚠️  Loop detected: ${loopDesc}`);
     }

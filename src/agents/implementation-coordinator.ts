@@ -148,6 +148,7 @@ export async function runImplementationCoordinator(
   historyTrimThreshold?: number,
   historyTrimKeep?: number,
   parallelToolCalls?: boolean,
+  frequencyPenalty?: number,
 ): Promise<CoordinatorResult> {
   let totalUsage = emptyTokenUsage();
   let tasksCompleted = 0;
@@ -189,6 +190,7 @@ export async function runImplementationCoordinator(
       historyTrimThreshold,
       historyTrimKeep,
       parallelToolCalls,
+      frequencyPenalty,
     );
 
     totalUsage = addTokenUsage(totalUsage, result.usage);
@@ -262,6 +264,7 @@ export async function runImplementationCoordinator(
       historyTrimThreshold,
       historyTrimKeep,
       parallelToolCalls,
+      frequencyPenalty,
     );
 
     totalUsage = addTokenUsage(totalUsage, repairResult.usage);

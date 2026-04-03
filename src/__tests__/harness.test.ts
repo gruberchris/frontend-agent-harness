@@ -85,12 +85,12 @@ describe("runHarness - success path", () => {
 
     const report = await runHarness({
       maxEvaluatorIterations: 3, maxToolCallIterations: 20,
+      commandTimeoutSecs: 120, llmTimeoutSecs: 300,
       outputDir: tmpOutputDir,
       appDir: tmpOutputDir + "/app",
       designFile: tmpDesignFile,
       planFile: tmpPlanFile,
       memoryFile: tmpOutputDir + "/memory.md",
-      resetAppOnRetry: false,
       devServer: { port: 3000, startCommand: "bun run dev" },
       playwright: { headless: true, browser: "chrome" },
       provider: { type: "copilot" },
@@ -125,12 +125,12 @@ describe("runHarness - max iterations failure", () => {
 
     const report = await runHarness({
       maxEvaluatorIterations: 2, maxToolCallIterations: 20,
+      commandTimeoutSecs: 120, llmTimeoutSecs: 300,
       outputDir: tmpOutputDir,
       appDir: tmpOutputDir + "/app",
       designFile: tmpDesignFile,
       planFile: tmpPlanFile,
       memoryFile: tmpOutputDir + "/memory.md",
-      resetAppOnRetry: false,
       devServer: { port: 3001, startCommand: "bun run dev" },
       playwright: { headless: true, browser: "chrome" },
       provider: { type: "copilot" },
@@ -155,11 +155,11 @@ describe("runHarness - missing design file", () => {
     expect(
       runHarness({
         maxEvaluatorIterations: 3, maxToolCallIterations: 20,
+        commandTimeoutSecs: 120, llmTimeoutSecs: 300,
         outputDir: "/tmp/output",
         appDir: "/tmp/output/app",
         designFile: "/tmp/nonexistent-design-xyz.md",
         planFile: "/tmp/plan.md",
-        resetAppOnRetry: false,
         memoryFile: "/tmp/memory.md",
         devServer: { port: 3000, startCommand: "bun run dev" },
         playwright: { headless: true, browser: "chrome" },
@@ -176,43 +176,57 @@ describe("runHarness - missing design file", () => {
   });
 });
 
-describe("runHarness - resetAppOnRetry", () => {
-  test("clears appDir and resets planFile on retry but preserves memoryFile and rest of outputDir", async () => {
+describe("runHarness - startup resume from existing plan.md", () => {
+  test("skips task agent and resumes from first pending task when plan.md exists", async () => {
     evalCallCount = 0;
     evalShouldPass = true;
-    evalPassFromCallN = 2; // fail on call 1, pass on call 2
+    evalPassFromCallN = 1;
 
-    const tmpDesignFile = `/tmp/harness-design-reset-${Date.now()}.md`;
-    const tmpOutputDir = `/tmp/harness-output-reset-${Date.now()}`;
+    const tmpDesignFile = `/tmp/harness-design-resume-${Date.now()}.md`;
+    const tmpOutputDir = `/tmp/harness-output-resume-${Date.now()}`;
     const tmpAppDir = `${tmpOutputDir}/app`;
     const tmpPlanFile = `${tmpOutputDir}/plan.md`;
     const tmpMemoryFile = `${tmpOutputDir}/memory.md`;
     trackedFiles.push(tmpDesignFile, tmpOutputDir);
 
     await Bun.write(tmpDesignFile, "# Design doc");
+    await fs.mkdir(tmpOutputDir, { recursive: true });
 
-    // Pre-populate appDir with a marker file (simulates first iteration output)
+    // Pre-write a plan.md so the harness should resume (skip task agent)
+    await Bun.write(
+      tmpPlanFile,
+      `### Task 1: Build app
+**Status**: pending
+**Description**: Create the app
+**Acceptance Criteria**: App runs
+**Example Code**:
+\`\`\`typescript
+console.log("hello");
+\`\`\`
+`,
+    );
+
+    // Pre-populate appDir with a marker file — it should NOT be cleared on resume
     await fs.mkdir(tmpAppDir, { recursive: true });
-    await Bun.write(`${tmpAppDir}/marker.txt`, "should be deleted on retry");
+    await Bun.write(`${tmpAppDir}/marker.txt`, "should survive resume");
 
-    // Put a file in outputDir but OUTSIDE appDir (should survive)
-    await Bun.write(`${tmpOutputDir}/outside.txt`, "should survive retry");
-
-    // Pre-write memory file with existing content (should survive)
-    await Bun.write(tmpMemoryFile, "prior memory content");
+    const { runTaskAgent: mockTaskAgent } = await import("../agents/task-agent.ts");
+    const taskAgentMock = mockTaskAgent as ReturnType<typeof mock>;
+    taskAgentMock.mockClear();
 
     const { runHarness } = await import("../pipeline/harness.ts");
 
     const report = await runHarness({
       maxEvaluatorIterations: 3,
       maxToolCallIterations: 20,
+      commandTimeoutSecs: 120,
+      llmTimeoutSecs: 300,
       outputDir: tmpOutputDir,
       appDir: tmpAppDir,
       designFile: tmpDesignFile,
       planFile: tmpPlanFile,
       memoryFile: tmpMemoryFile,
-      resetAppOnRetry: true,
-      devServer: { port: 3002, startCommand: "bun run dev" },
+      devServer: { port: 3003, startCommand: "bun run dev" },
       playwright: { headless: true, browser: "chrome" },
       provider: { type: "copilot" },
 
@@ -224,18 +238,65 @@ describe("runHarness - resetAppOnRetry", () => {
       },
     });
 
-    // Two iterations: NEEDS_WORK on first, PASS on second
-    expect(report.totalIterations).toBe(2);
     expect(report.result).toBe("SUCCESS");
+    // Task agent should NOT have been called (we resumed from existing plan.md)
+    expect(taskAgentMock.mock.calls.length).toBe(0);
+    // appDir should be untouched
+    expect(await Bun.file(`${tmpAppDir}/marker.txt`).exists()).toBe(true);
+  });
 
-    // appDir marker should have been cleared on retry
-    expect(await Bun.file(`${tmpAppDir}/marker.txt`).exists()).toBe(false);
+  test("clears output dir and runs task agent when plan.md does not exist", async () => {
+    evalCallCount = 0;
+    evalShouldPass = true;
+    evalPassFromCallN = 1;
 
-    // File outside appDir in outputDir should be untouched
-    expect(await Bun.file(`${tmpOutputDir}/outside.txt`).exists()).toBe(true);
-    expect(await Bun.file(`${tmpOutputDir}/outside.txt`).text()).toBe("should survive retry");
+    const tmpDesignFile = `/tmp/harness-design-fresh-${Date.now()}.md`;
+    const tmpOutputDir = `/tmp/harness-output-fresh-${Date.now()}`;
+    const tmpAppDir = `${tmpOutputDir}/app`;
+    const tmpPlanFile = `${tmpOutputDir}/plan.md`;
+    const tmpMemoryFile = `${tmpOutputDir}/memory.md`;
+    trackedFiles.push(tmpDesignFile, tmpOutputDir);
 
-    // memoryFile should be preserved (not cleared by retry)
-    expect(await Bun.file(tmpMemoryFile).text()).toBe("prior memory content");
+    await Bun.write(tmpDesignFile, "# Design doc");
+
+    // Pre-populate outputDir with a stale marker — it should be cleared on fresh start
+    await fs.mkdir(tmpAppDir, { recursive: true });
+    await Bun.write(`${tmpAppDir}/stale.txt`, "should be deleted");
+
+    // No plan.md — harness must start fresh
+
+    const { runTaskAgent: mockTaskAgent } = await import("../agents/task-agent.ts");
+    const taskAgentMock = mockTaskAgent as ReturnType<typeof mock>;
+    taskAgentMock.mockClear();
+
+    const { runHarness } = await import("../pipeline/harness.ts");
+
+    const report = await runHarness({
+      maxEvaluatorIterations: 3,
+      maxToolCallIterations: 20,
+      commandTimeoutSecs: 120,
+      llmTimeoutSecs: 300,
+      outputDir: tmpOutputDir,
+      appDir: tmpAppDir,
+      designFile: tmpDesignFile,
+      planFile: tmpPlanFile,
+      memoryFile: tmpMemoryFile,
+      devServer: { port: 3004, startCommand: "bun run dev" },
+      playwright: { headless: true, browser: "chrome" },
+      provider: { type: "copilot" },
+
+      agents: {
+        taskAgent: { model: "gpt-4o", systemPrompt: "You are an architect." },
+        implementationCoordinator: { model: "gpt-4.1", systemPrompt: "You are a coordinator." },
+        implementationAgent: { model: "gpt-4o", systemPrompt: "You are a coder." },
+        evaluatorAgent: { model: "gpt-4o", systemPrompt: "You are an evaluator." },
+      },
+    });
+
+    expect(report.result).toBe("SUCCESS");
+    // Task agent should have been called once (fresh start)
+    expect(taskAgentMock.mock.calls.length).toBeGreaterThanOrEqual(1);
+    // Stale file should have been cleared
+    expect(await Bun.file(`${tmpAppDir}/stale.txt`).exists()).toBe(false);
   });
 });

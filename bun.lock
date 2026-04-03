@@ -7,6 +7,8 @@
       "dependencies": {
         "chalk": "^5.6.2",
         "openai": "^6.33.0",
+        "react": "^19.2.4",
+        "react-dom": "^19.2.4",
         "zod": "^4.3.6",
       },
       "devDependencies": {
@@ -36,6 +38,12 @@
     "playwright": ["playwright@1.59.0-alpha-1774912654000", "", { "dependencies": { "playwright-core": "1.59.0-alpha-1774912654000" }, "optionalDependencies": { "fsevents": "2.3.2" }, "bin": { "playwright": "cli.js" } }, "sha512-98v8NQ0ZaNTdOhwo24sq7Y79wuh+Q6TShG6DKgyQIUr4cBV5gDRIcRjTVZz5LhwYAwCOXCanvY5er47mowV8ww=="],
 
     "playwright-core": ["playwright-core@1.59.0-alpha-1774912654000", "", { "bin": { "playwright-core": "cli.js" } }, "sha512-A4zBS+GASROUFrHTMeC0ySI1+f/Wjbm0OJIAUFu4q+0Si3tfLg742dGwq1AezmMBovINt6Fi7fOTjtGZCQQCEw=="],
+
+    "react": ["react@19.2.4", "", {}, "sha512-9nfp2hYpCwOjAN+8TZFGhtWEwgvWHXqESH8qT89AT/lWklpLON22Lc8pEtnpsZz7VmawabSU0gCjnj8aC0euHQ=="],
+
+    "react-dom": ["react-dom@19.2.4", "", { "dependencies": { "scheduler": "^0.27.0" }, "peerDependencies": { "react": "^19.2.4" } }, "sha512-AXJdLo8kgMbimY95O2aKQqsz2iWi9jMgKJhRBAxECE4IFxfcazB2LmzloIoibJI3C12IlY20+KFaLv+71bUJeQ=="],
+
+    "scheduler": ["scheduler@0.27.0", "", {}, "sha512-eNv+WrVbKu1f3vbYJT/xtiF5syA5HPIMtf9IgY/nKg0sWqzAUEvqY/xm7OcZc/qafLx/iO9FgOmeSAp4v5ti/Q=="],
 
     "typescript": ["typescript@5.9.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
 

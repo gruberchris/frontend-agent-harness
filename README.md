@@ -123,6 +123,116 @@ bun run index.ts --design ./my-app-design.md --config ./config.json
 
 ---
 
+## Configuration Reference
+
+All settings live in `config.json`. Every field is optional — omitting a field uses the default.
+
+### Top-level fields
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `outputDir` | string | `"./output"` | Directory where `plan.md`, `memory.md`, and the generated app are written |
+| `appDir` | string | `"./output/app"` | Sub-directory where the generated app files live (must be inside `outputDir`) |
+| `designFile` | string | `"./input/design.md"` | Path to your design document (never modified by the harness) |
+| `planFile` | string | `"./output/plan.md"` | Path to the generated implementation plan |
+| `memoryFile` | string | `"./output/memory.md"` | Path to the evaluator's persistent lessons-learned log |
+| `maxEvaluatorIterations` | integer ≥ 1 | `3` | Maximum number of evaluate → fix cycles before the pipeline stops with FAILURE |
+| `maxToolCallIterations` | integer ≥ 1 | `20` | Maximum tool calls the implementation agent may make per task |
+| `commandTimeoutSecs` | integer ≥ 10 | `120` | Timeout (seconds) for shell commands run by the implementation agent |
+| `llmTimeoutSecs` | integer ≥ 10 | `300` | Timeout (seconds) for each LLM API call |
+| `projectContextChars` | integer ≥ 500 | *(derived)* | Max characters of project snapshot per task. Auto-derived from `implementationAgent.contextWindow`; set explicitly to override. |
+| `historyTrimThreshold` | integer ≥ 4 | *(derived)* | Trim conversation history when message count exceeds this. Auto-derived from `implementationAgent.contextWindow`. |
+| `historyTrimKeep` | integer ≥ 2 | *(derived)* | Messages to keep after trimming. Auto-derived from `implementationAgent.contextWindow`. |
+
+### Startup resume behavior
+
+On startup the harness checks whether `planFile` already exists and has content:
+
+- **`planFile` exists** → skip the Task Agent, resume implementation from the first task not yet marked `completed`
+- **`planFile` missing or empty** → clear the entire `outputDir` and start fresh (runs the Task Agent on `designFile`)
+
+To force a fresh start, delete `output/plan.md` (or the path configured as `planFile`).
+
+### `devServer`
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `devServer.port` | integer 1–65535 | `3000` | Port the dev server listens on; also used by the Evaluator Agent to navigate to the app |
+| `devServer.startCommand` | string | `"bun run dev"` | Shell command run inside `appDir` to start the dev server |
+
+### `playwright`
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `playwright.headless` | boolean | `true` | Run the browser in headless mode; set to `false` to watch the evaluator navigate the UI |
+| `playwright.browser` | `"chrome"` \| `"firefox"` \| `"webkit"` \| `"msedge"` | `"chrome"` | Browser used by the Evaluator Agent |
+
+### `agents`
+
+Each of the four agents (`taskAgent`, `implementationCoordinator`, `implementationAgent`, `evaluatorAgent`) shares the same set of fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `model` | string | yes | Model name/deployment to use for this agent |
+| `systemPrompt` | string | yes | System prompt sent to the model; overrides the built-in default |
+| `reasoningEffort` | `"none"` \| `"minimal"` \| `"low"` \| `"medium"` \| `"high"` \| `"xhigh"` | no | Reasoning effort passed to the model (o-series / thinking models only); ignored by providers that don't support it |
+| `maxTokens` | integer ≥ 256 | no | Maximum completion tokens for this agent's responses. Auto-derived from `contextWindow` if not set. |
+| `contextWindow` | integer ≥ 1024 | no | Model's context window size in tokens. When set, automatically derives `maxTokens` and (for `implementationAgent`) the three context-tuning params below. |
+
+**Example — override just the model and add reasoning effort:**
+
+```json
+{
+  "agents": {
+    "implementationAgent": {
+      "model": "o3-mini",
+      "systemPrompt": "You are a coding implementation agent...",
+      "reasoningEffort": "high",
+      "maxTokens": 32768
+    }
+  }
+}
+```
+
+### Context window scaling
+
+For models with small context windows (local models, smaller hosted models), set `contextWindow` on the `implementationAgent` and the harness will automatically tune the three parameters that control how much context the agent sees per task:
+
+| Parameter | Where set | Formula | Purpose |
+|---|---|---|---|
+| `maxTokens` | per-agent | `contextWindow × 0.3` (capped at 16,384) | Max output tokens per LLM response |
+| `projectContextChars` | top-level | `contextWindow × 0.8` (capped at 50,000) | Max characters of project snapshot injected before each task |
+| `historyTrimThreshold` | top-level | `contextWindow ÷ 1,000` (clamped 8–60) | Trim conversation history when it exceeds this many messages |
+| `historyTrimKeep` | top-level | `historyTrimThreshold ÷ 2` (min 4) | Number of recent messages to keep after trimming |
+
+Quick reference by context window size:
+
+| Context window | `maxTokens` | `projectContextChars` | `historyTrimThreshold` | `historyTrimKeep` |
+|---|---|---|---|---|
+| **8K** | 2,457 | 6,553 | 8 | 4 |
+| **12K** | 3,686 | 9,830 | 12 | 6 |
+| **32K** | 9,830 | 25,600 | 32 | 16 |
+| **64K** | 16,384 *(capped)* | 50,000 *(capped)* | 60 *(capped)* | 30 |
+| **128K+** | 16,384 *(capped)* | 50,000 *(capped)* | 60 *(capped)* | 30 |
+
+You can override any derived value explicitly — explicit config values always win:
+
+```json
+{
+  "agents": {
+    "implementationAgent": {
+      "model": "gemma-4-26b-a4b-it",
+      "contextWindow": 12288
+    }
+  },
+  "projectContextChars": 6000
+}
+```
+
+If you don't set `contextWindow`, the harness uses conservative defaults (`historyTrimThreshold: 30`, `historyTrimKeep: 15`, `projectContextChars: 50,000`).
+
+---
+
 ## Providers
 
 The harness supports four LLM providers, configured globally via the `provider` block in `config.json`. All agents use the same provider.

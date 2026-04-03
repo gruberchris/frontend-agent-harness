@@ -8,6 +8,10 @@ const AgentConfigSchema = z.object({
   systemPrompt: z.string().min(1),
   reasoningEffort: z.enum(REASONING_EFFORT_VALUES).optional(),
   maxTokens: z.number().int().min(256).optional(),
+  /** Context window size in tokens. When set on implementationAgent, automatically derives projectContextChars, historyTrimThreshold, and historyTrimKeep unless those are explicitly overridden. */
+  contextWindow: z.number().int().min(1024).optional(),
+  /** When false, disables parallel tool calling so the model makes one tool call per response. Recommended for small-context models that generate runaway batches. */
+  parallelToolCalls: z.boolean().optional(),
 });
 
 export const HarnessConfigSchema = z.object({
@@ -16,12 +20,17 @@ export const HarnessConfigSchema = z.object({
   maxToolCallIterations: z.number().int().min(1),
   commandTimeoutSecs: z.number().int().min(10),
   llmTimeoutSecs: z.number().int().min(10),
-  resetAppOnRetry: z.boolean(),
   outputDir: z.string(),
   appDir: z.string(),
   designFile: z.string(),
   planFile: z.string(),
   memoryFile: z.string(),
+  /** Max characters of project context injected into each implementation task (default 50,000). Lower this for small context window models. */
+  projectContextChars: z.number().int().min(500).optional(),
+  /** Trim conversation history when message count exceeds this (default 30). Lower for small context windows. */
+  historyTrimThreshold: z.number().int().min(4).optional(),
+  /** Number of recent messages to keep after trimming (default 15). Lower for small context windows. */
+  historyTrimKeep: z.number().int().min(2).optional(),
   devServer: z.object({
     port: z.number().int().min(1).max(65535),
     startCommand: z.string(),
@@ -46,7 +55,6 @@ const DEFAULTS: HarnessConfig = {
   maxToolCallIterations: 20,
   commandTimeoutSecs: 120,
   llmTimeoutSecs: 300,
-  resetAppOnRetry: false,
   outputDir: "./output",
   appDir: "./output/app",
   designFile: "./input/design.md",
@@ -177,14 +185,14 @@ export async function loadConfig(configPath: string): Promise<HarnessConfig> {
     ...(raw["commandTimeoutSecs"] !== undefined && {
       commandTimeoutSecs: raw["commandTimeoutSecs"] as number,
     }),
-    ...(raw["resetAppOnRetry"] !== undefined && {
-      resetAppOnRetry: raw["resetAppOnRetry"] as boolean,
-    }),
     ...(raw["outputDir"] !== undefined && { outputDir: raw["outputDir"] as string }),
     ...(raw["appDir"] !== undefined && { appDir: raw["appDir"] as string }),
     ...(raw["designFile"] !== undefined && { designFile: raw["designFile"] as string }),
     ...(raw["planFile"] !== undefined && { planFile: raw["planFile"] as string }),
     ...(raw["memoryFile"] !== undefined && { memoryFile: raw["memoryFile"] as string }),
+    ...(raw["projectContextChars"] !== undefined && { projectContextChars: raw["projectContextChars"] as number }),
+    ...(raw["historyTrimThreshold"] !== undefined && { historyTrimThreshold: raw["historyTrimThreshold"] as number }),
+    ...(raw["historyTrimKeep"] !== undefined && { historyTrimKeep: raw["historyTrimKeep"] as number }),
     devServer: { ...DEFAULTS.devServer, ...((raw["devServer"] as RawConfig) ?? {}) },
     playwright: { ...DEFAULTS.playwright, ...((raw["playwright"] as RawConfig) ?? {}) } as HarnessConfig["playwright"],
     agents: {
@@ -204,5 +212,44 @@ export async function loadConfig(configPath: string): Promise<HarnessConfig> {
     },
   };
 
+  // Auto-derive maxTokens for each agent from contextWindow if maxTokens isn't set explicitly.
+  for (const agent of Object.values(merged.agents)) {
+    if (agent.contextWindow && !agent.maxTokens) {
+      agent.maxTokens = Math.min(16_384, Math.round(agent.contextWindow * 0.3));
+    }
+  }
+
+  // Auto-derive implementation-specific context params from implementationAgent.contextWindow
+  // if they aren't set explicitly in the config. Explicit values always win.
+  const implContextWindow = merged.agents.implementationAgent.contextWindow;
+  if (implContextWindow) {
+    const derived = deriveContextParams(implContextWindow);
+    merged.projectContextChars ??= derived.projectContextChars;
+    merged.historyTrimThreshold ??= derived.historyTrimThreshold;
+    merged.historyTrimKeep ??= derived.historyTrimKeep;
+  }
+
   return HarnessConfigSchema.parse(merged);
+}
+
+/**
+ * Derives projectContextChars, historyTrimThreshold, and historyTrimKeep from
+ * a model's declared context window size. Explicit config values take precedence.
+ *
+ * Formulas:
+ *   projectContextChars  = min(50 000, contextWindow × 0.8)   — ~20% of context at 4 chars/token
+ *   historyTrimThreshold = clamp(8–60, contextWindow ÷ 1 000) — ~1 message slot per 1K tokens
+ *   historyTrimKeep      = clamp(4, threshold ÷ 2)
+ */
+export function deriveContextParams(contextWindow: number): {
+  projectContextChars: number;
+  historyTrimThreshold: number;
+  historyTrimKeep: number;
+} {
+  const trimThreshold = Math.max(8, Math.min(60, Math.round(contextWindow / 1_000)));
+  return {
+    projectContextChars: Math.min(50_000, Math.round(contextWindow * 0.8)),
+    historyTrimThreshold: trimThreshold,
+    historyTrimKeep: Math.max(4, Math.round(trimThreshold / 2)),
+  };
 }

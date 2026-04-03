@@ -79,7 +79,8 @@ export async function readTasks(planFile: string): Promise<PlanTask[]> {
 
 export async function getNextPendingTask(planFile: string): Promise<PlanTask | null> {
   const tasks = await readTasks(planFile);
-  return tasks.find((t) => t.status === "pending") ?? null;
+  // Treat in_progress as resumable — if a prior run was interrupted mid-task, pick it up again.
+  return tasks.find((t) => t.status === "pending" || t.status === "in_progress") ?? null;
 }
 
 export async function updateTaskStatus(

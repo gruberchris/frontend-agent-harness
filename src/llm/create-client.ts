@@ -10,10 +10,11 @@ export function createLLMClient(
   reasoningEffort?: string,
   maxTokens?: number,
   llmTimeoutSecs?: number,
+  parallelToolCalls?: boolean,
 ): LLMProvider {
   switch (providerConfig.type) {
     case "copilot":
-      return new CopilotProvider(model, reasoningEffort, maxTokens, llmTimeoutSecs);
+      return new CopilotProvider(model, reasoningEffort, maxTokens, llmTimeoutSecs, parallelToolCalls);
     case "azure":
       return new AzureProvider(
         model,
@@ -22,11 +23,12 @@ export function createLLMClient(
         reasoningEffort,
         maxTokens,
         llmTimeoutSecs,
+        parallelToolCalls,
       );
     case "ollama":
-      return new OllamaProvider(model, providerConfig.baseUrl, maxTokens, llmTimeoutSecs);
+      return new OllamaProvider(model, providerConfig.baseUrl, maxTokens, llmTimeoutSecs, parallelToolCalls);
     case "lm-studio":
-      return new LmStudioProvider(model, providerConfig.baseUrl, maxTokens, llmTimeoutSecs);
+      return new LmStudioProvider(model, providerConfig.baseUrl, maxTokens, llmTimeoutSecs, parallelToolCalls);
     default:
       throw new Error(
         `Unknown LLM provider type: "${((providerConfig satisfies never) as { type: string }).type}". ` +

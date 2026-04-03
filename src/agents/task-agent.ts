@@ -29,14 +29,27 @@ export async function runTaskAgent(
 
   let feedbackSection = "";
   if (existingPlan || existingMemory) {
+    const correctionInstructions = existingMemory
+      ? `IMPORTANT: You are in a correction iteration. The evaluator found problems that must be fixed.
+The implementation agent executes tasks without access to the evaluator memory below — every detail needed to make each correction MUST be encoded in the task's Description and Acceptance Criteria.
+
+For each distinct evaluator finding, create one dedicated correction task that:
+- Names the specific problem (e.g. "Fix: submit button is red, should be blue")
+- Specifies the exact file(s) to modify
+- Describes precisely what change to make
+- Includes testable acceptance criteria
+
+Do NOT create a single vague "fix evaluator issues" task. Each finding → one task.`
+      : `The following information comes from a previous iteration. Use it to improve the plan.`;
+
     feedbackSection = `\n\n### PREVIOUS ITERATION FEEDBACK & CONTEXT
-The following information comes from a previous failed iteration. Use it to improve the plan and avoid repeating the same mistakes.
+${correctionInstructions}
+
+#### Evaluator Memory (Lessons Learned):
+${existingMemory || "No evaluator findings yet."}
 
 #### Previous Plan:
 ${existingPlan || "No previous plan found."}
-
-#### Evaluator Memory (Lessons Learned):
-${existingMemory || "No specific evaluator memory found yet."}
 `;
   }
 

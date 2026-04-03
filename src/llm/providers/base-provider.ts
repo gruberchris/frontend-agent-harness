@@ -18,11 +18,14 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
   /** Parameter name for the token limit. Subclasses may override to "max_completion_tokens". */
   protected readonly maxTokensParamName: string = "max_tokens";
 
-  constructor(model: string, reasoningEffort?: string, maxTokens?: number, llmTimeoutSecs?: number) {
+  protected parallelToolCalls?: boolean;
+
+  constructor(model: string, reasoningEffort?: string, maxTokens?: number, llmTimeoutSecs?: number, parallelToolCalls?: boolean) {
     this.model = model;
     this.reasoningEffort = reasoningEffort;
     this.maxTokens = maxTokens;
     this.llmTimeoutMs = llmTimeoutSecs !== undefined ? llmTimeoutSecs * 1000 : undefined;
+    this.parallelToolCalls = parallelToolCalls;
   }
 
   protected abstract initClient(): Promise<void>;
@@ -100,6 +103,7 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
         messages: openaiMessages as Parameters<typeof this.client.chat.completions.create>[0]["messages"],
         tools: openaiTools,
         tool_choice: openaiTools ? "auto" : undefined,
+        ...(this.parallelToolCalls === false && { parallel_tool_calls: false }),
         ...(this.supportsReasoningEffort && this.reasoningEffort && {
           reasoning_effort: this.reasoningEffort as "low" | "medium" | "high",
         }),

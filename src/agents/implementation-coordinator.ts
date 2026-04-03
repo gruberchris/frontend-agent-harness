@@ -61,7 +61,7 @@ async function readFileCapped(filePath: string, cap = 3_000): Promise<string | n
   return text.length > cap ? text.slice(0, cap) + "\n... (truncated)" : text;
 }
 
-async function buildProjectContext(planFile: string, outputDir: string, memoryFile: string): Promise<string> {
+async function buildProjectContext(planFile: string, outputDir: string, contextCap = 50_000): Promise<string> {
   const parts: string[] = [];
   const absOutputDir = path.resolve(outputDir);
 
@@ -69,12 +69,6 @@ async function buildProjectContext(planFile: string, outputDir: string, memoryFi
   const header = await readPlanHeader(planFile);
   if (header) {
     parts.push(`## Project Plan Header (Tech Stack & Conventions)\n${header}`);
-  }
-
-  // 1.5. Evaluator Memory (Lessons Learned)
-  const memory = (await Bun.file(memoryFile).exists()) ? await Bun.file(memoryFile).text() : "";
-  if (memory) {
-    parts.push(`## Evaluator Memory & Previous Corrections\n${memory}`);
   }
 
   // 2. File tree of ./output/ (2 levels deep, max 60 entries, skip node_modules)
@@ -118,10 +112,8 @@ async function buildProjectContext(planFile: string, outputDir: string, memoryFi
 
   const context = parts.join("\n\n");
 
-  // Hard cap on total context size sent per task (~50KB)
-  const CONTEXT_CAP = 50_000;
-  if (context.length > CONTEXT_CAP) {
-    return context.slice(0, CONTEXT_CAP) + "\n\n... (project context truncated to fit context window)";
+  if (context.length > contextCap) {
+    return context.slice(0, contextCap) + "\n\n... (project context truncated to fit context window)";
   }
   return context;
 }
@@ -131,7 +123,6 @@ export async function runImplementationCoordinator(
   providerConfig: ProviderConfig,
   design: DesignContent,
   planFile: string,
-  memoryFile: string,
   outputDir: string,
   systemPrompt: string,
   reasoningEffort?: string,
@@ -139,6 +130,10 @@ export async function runImplementationCoordinator(
   maxToolCallIterations?: number,
   commandTimeoutSecs?: number,
   llmTimeoutSecs?: number,
+  projectContextChars?: number,
+  historyTrimThreshold?: number,
+  historyTrimKeep?: number,
+  parallelToolCalls?: boolean,
 ): Promise<CoordinatorResult> {
   let totalUsage = emptyTokenUsage();
   let tasksCompleted = 0;
@@ -154,7 +149,7 @@ export async function runImplementationCoordinator(
 
     console.log(chalk.cyan(`\n▶️  Implementing Task ${nextTask.number}: ${nextTask.title}`));
 
-    const projectContext = await buildProjectContext(planFile, outputDir, memoryFile);
+    const projectContext = await buildProjectContext(planFile, outputDir, projectContextChars);
 
     // Send design images only for the first task or visually-focused tasks.
     // Resending large base64 images on every task wastes significant tokens.
@@ -177,12 +172,20 @@ export async function runImplementationCoordinator(
       maxToolCallIterations,
       commandTimeoutSecs,
       llmTimeoutSecs,
+      historyTrimThreshold,
+      historyTrimKeep,
+      parallelToolCalls,
     );
 
     totalUsage = addTokenUsage(totalUsage, result.usage);
     tasksCompleted++;
 
-    console.log(chalk.green(`  ✅ Task ${nextTask.number} completed: ${result.summary}`));
+    const failed = result.summary.startsWith("Implementation failed");
+    if (failed) {
+      console.log(chalk.yellow(`  ⚠️  Task ${nextTask.number} incomplete: ${result.summary}`));
+    } else {
+      console.log(chalk.green(`  ✅ Task ${nextTask.number} completed: ${result.summary}`));
+    }
   }
 
   // ── Post-implementation reference validation & repair ──────────────────────
@@ -227,7 +230,7 @@ export async function runImplementationCoordinator(
     ].join("\n");
     await appendTasks(planFile, repairBlock);
 
-    const repairContext = await buildProjectContext(planFile, outputDir, memoryFile);
+    const repairContext = await buildProjectContext(planFile, outputDir, projectContextChars);
     const repairResult = await runImplementationAgent(
       model,
       providerConfig,
@@ -242,6 +245,9 @@ export async function runImplementationCoordinator(
       maxToolCallIterations,
       commandTimeoutSecs,
       llmTimeoutSecs,
+      historyTrimThreshold,
+      historyTrimKeep,
+      parallelToolCalls,
     );
 
     totalUsage = addTokenUsage(totalUsage, repairResult.usage);

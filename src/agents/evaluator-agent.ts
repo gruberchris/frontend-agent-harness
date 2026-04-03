@@ -118,6 +118,7 @@ Use the available Playwright tools to navigate to the application, explore its f
   let decision: EvaluatorDecision = "NEEDS_WORK";
   let explanation = "";
   let corrections = "";
+  let decided = false;
 
   // Tool-calling loop
   for (let i = 0; i < maxToolCallIterations; i++) {
@@ -157,7 +158,7 @@ Use the available Playwright tools to navigate to the application, explore its f
       break;
     }
 
-    let decided = false;
+    decided = false;
     const collectedImages: MessageContentPart[] = [];
 
     for (const toolCall of response.toolCalls) {

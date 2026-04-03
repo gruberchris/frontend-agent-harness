@@ -227,9 +227,9 @@ describe("runImplementationAgent", () => {
 
     expect(result.summary).toContain("Implementation failed: Loop limit reached before completion.");
     
-    // Check that it was NOT marked completed
+    // Task should be marked completed so the coordinator doesn't retry it in the same run
     const updatedPlan = await Bun.file(tmpPlanFile).text();
-    expect(updatedPlan).toContain("**Status**: in_progress");
+    expect(updatedPlan).toContain("**Status**: completed");
   });
 });
 

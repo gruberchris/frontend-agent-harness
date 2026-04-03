@@ -163,8 +163,14 @@ export async function runImplementationAgent(
   maxToolCallIterations = 50,
   commandTimeoutSecs = 120,
   llmTimeoutSecs?: number,
+  /** Trim conversation history when it exceeds this many messages (default 30). Lower for small context windows. */
+  historyTrimThreshold = 30,
+  /** Number of recent messages to keep after trimming (default 15). Lower for small context windows. */
+  historyTrimKeep = 15,
+  /** When false, passes parallel_tool_calls=false to the API to force one tool call per response. */
+  parallelToolCalls?: boolean,
 ): Promise<ImplementationAgentResult> {
-  const client = createLLMClient(providerConfig, model, reasoningEffort, maxTokens, llmTimeoutSecs);
+  const client = createLLMClient(providerConfig, model, reasoningEffort, maxTokens, llmTimeoutSecs, parallelToolCalls);
   let usage = emptyTokenUsage();
 
   const absOutputDir = path.resolve(outputDir);
@@ -198,9 +204,15 @@ export async function runImplementationAgent(
   let summary: string;
   let filesWritten = 0;
   
-  // Loop detection
-  let lastToolCallSignature = "";
-  let consecutiveIdenticalCalls = 0;
+  // Loop detection — two complementary strategies:
+  //   1. Per-call count: catches any single tool+args called too many times total
+  //      (robust to the model varying batch size between 1 and N per response)
+  //   2. Sliding-window batch: catches A→B→A→B→A→B patterns across responses
+  const callCounts = new Map<string, number>(); // individual tool+args → total calls
+  const MAX_INDIVIDUAL_REPEATS = 3;
+  const recentSignatures: string[] = [];
+  const LOOP_WINDOW = 12; // signatures to keep
+  const CYCLE_LENGTHS = [1, 2, 3]; // detect cycles of these lengths
 
   // Tool-calling loop
   for (let i = 0; i < maxToolCallIterations; i++) {
@@ -214,15 +226,15 @@ export async function runImplementationAgent(
     }
 
     // Trim conversation history if it gets too large (keep system + first user + last N turns)
-    if (messages.length > 60) {
+    if (messages.length > historyTrimThreshold) {
       const system = messages[0]!;
       const firstUser = messages[1]!;
-      // Keep only the last 40 messages plus system + first user.
+      // Keep only the last historyTrimKeep messages plus system + first user.
       // IMPORTANT: the slice must not start with a `tool` message — those require
       // a preceding `assistant` message with `tool_calls`. If an assistant+tools
       // batch straddles the cut point, advance past the orphaned tool messages so
       // the slice always begins at a clean turn boundary.
-      let recentStart = messages.length - 40;
+      let recentStart = messages.length - historyTrimKeep;
       while (recentStart < messages.length && messages[recentStart]!.role === "tool") {
         recentStart++;
       }
@@ -233,6 +245,13 @@ export async function runImplementationAgent(
 
     const response = await client.chat(messages, IMPL_TOOLS);
     usage = addTokenUsage(usage, response.usage);
+
+    // If parallel_tool_calls:false isn't honored by the provider (e.g. LM Studio + Gemma4),
+    // enforce it ourselves: keep only the first tool call, discard the rest.
+    // The assistant message must reflect exactly what we tell the model we received.
+    if (!parallelToolCalls && response.toolCalls.length > 1) {
+      response.toolCalls.splice(1);
+    }
 
     // Add assistant message to history
     messages.push({
@@ -259,31 +278,76 @@ export async function runImplementationAgent(
     let completionCall: { id: string; summary: string } | null = null;
     let interceptedLoop = false;
 
-    // Loop detection check
-    const currentSignature = JSON.stringify(response.toolCalls);
-    if (currentSignature === lastToolCallSignature) {
-      consecutiveIdenticalCalls++;
-    } else {
-      consecutiveIdenticalCalls = 0;
-      lastToolCallSignature = currentSignature;
+    // Deduplicate within this batch: Gemma-4 can generate hundreds of identical tool calls in
+    // a single response via parallel tool calling. We execute each unique (name, args) pair once
+    // and return the cached result for duplicates, preventing context flooding.
+    const batchResultCache = new Map<string, string>(); // sig → execution result
+    const sigFirstIdx = new Map<string, number>();       // sig → index of first occurrence
+    const annotated = response.toolCalls.map((tc, idx) => {
+      const sig = JSON.stringify({ name: tc.name, arguments: tc.arguments });
+      const isDup = sigFirstIdx.has(sig);
+      if (!isDup) sigFirstIdx.set(sig, idx);
+      return { tc, sig, isDup };
+    });
+    const uniqueCalls = annotated.filter((a) => !a.isDup);
+    const batchDupCount = annotated.length - uniqueCalls.length;
+    if (batchDupCount > 0) {
+      console.log(`    ⚠️  Batch contained ${batchDupCount} duplicate tool calls (collapsed)`);
     }
 
-    if (consecutiveIdenticalCalls >= 3) {
-      // Intercept the call
-      for (const toolCall of response.toolCalls) {
+    // Strategy 1: Per-call count — only count unique calls so that a 175-call batch counts as 1.
+    for (const { sig } of uniqueCalls) {
+      callCounts.set(sig, (callCounts.get(sig) ?? 0) + 1);
+    }
+    const overusedCall = uniqueCalls.find(({ sig }) => (callCounts.get(sig) ?? 0) > MAX_INDIVIDUAL_REPEATS);
+
+    // Strategy 2: Sliding-window batch over unique-call signatures — catches A→B→A→B patterns.
+    const currentSignature = JSON.stringify(uniqueCalls.map(({ sig }) => sig));
+    recentSignatures.push(currentSignature);
+    if (recentSignatures.length > LOOP_WINDOW) recentSignatures.shift();
+
+    let detectedCycleLength = 0;
+    const MIN_REPETITIONS = 3;
+    for (const cycleLen of CYCLE_LENGTHS) {
+      const needed = cycleLen * MIN_REPETITIONS;
+      if (recentSignatures.length < needed) continue;
+      const tail = recentSignatures.slice(-needed);
+      const pattern = tail.slice(0, cycleLen);
+      const isLoop = tail.every((sig, idx) => sig === pattern[idx % cycleLen]);
+      if (isLoop) {
+        detectedCycleLength = cycleLen;
+        break;
+      }
+    }
+
+    if (overusedCall || detectedCycleLength > 0) {
+      const isReplaceText = uniqueCalls.every(({ tc }) => tc.name === "replace_text");
+      const loopDesc = overusedCall
+        ? `${overusedCall.tc.name} called ${callCounts.get(overusedCall.sig)} times`
+        : detectedCycleLength === 1 ? "the exact same tool call batch" : `a ${detectedCycleLength}-step cycle of tool calls`;
+      const suggestion = isReplaceText
+        ? " You are repeatedly failing to match text in replace_text. The error response includes the actual file contents — use write_file to rewrite the entire file instead."
+        : " Break out by trying a completely different approach, skipping the failing step, or calling mark_task_complete if the core work is done.";
+      // Reply to every tool call in the batch (API requirement), but use a one-liner for duplicates.
+      const seenInLoop = new Set<string>();
+      for (const { tc, sig } of annotated) {
+        const isFirstForSig = !seenInLoop.has(sig);
+        seenInLoop.add(sig);
         messages.push({
           role: "tool",
-          content: "Error: You are caught in a loop making the exact same tool calls. You must try a different approach or mark the task as complete/failed.",
-          toolCallId: toolCall.id,
+          content: isFirstForSig
+            ? `Error: Loop detected — ${loopDesc}.${suggestion}`
+            : `Error: Duplicate of a looped call.`,
+          toolCallId: tc.id,
         });
       }
       interceptedLoop = true;
-      console.log(`    ⚠️  Intercepted tool call loop`);
+      console.log(`    ⚠️  Loop detected: ${loopDesc}`);
     }
 
     if (!interceptedLoop) {
-      for (const toolCall of response.toolCalls) {
-        if (toolCall.name === "mark_task_complete") {
+      for (const { tc, sig, isDup } of annotated) {
+        if (tc.name === "mark_task_complete") {
           // Guard: refuse completion if no work has been done at all (no files exist in output dir)
           if (filesWritten === 0) {
             const entries = await fs.readdir(absOutputDir, { recursive: true }).catch(() => [] as string[]);
@@ -294,32 +358,37 @@ export async function runImplementationAgent(
               messages.push({
                 role: "tool",
                 content: "Error: Cannot mark task complete — no files exist in the output directory yet. Create files with write_file or run a scaffold command first.",
-                toolCallId: toolCall.id,
+                toolCallId: tc.id,
               });
               console.log(`    ⚠️  Refused early mark_task_complete (output dir is empty)`);
               continue;
             }
           }
           completionCall = {
-            id: toolCall.id,
-            summary: (toolCall.arguments["summary"] as string) ?? "Task completed",
+            id: tc.id,
+            summary: (tc.arguments["summary"] as string) ?? "Task completed",
           };
           // Execute the underlying status update
-          await executeTool(toolCall.name, toolCall.arguments, absOutputDir, planFile, task.number, commandTimeoutSecs);
+          await executeTool(tc.name, tc.arguments, absOutputDir, planFile, task.number, commandTimeoutSecs);
           messages.push({
             role: "tool",
             content: "Task marked as completed.",
-            toolCallId: toolCall.id,
+            toolCallId: tc.id,
           });
+        } else if (isDup) {
+          // Return cached result for duplicate calls — no re-execution, no re-printing.
+          const cached = batchResultCache.get(sig) ?? "(same result as first call)";
+          messages.push({ role: "tool", content: cached, toolCallId: tc.id });
         } else {
-          const result = await executeTool(toolCall.name, toolCall.arguments, absOutputDir, planFile, task.number, commandTimeoutSecs);
-          if ((toolCall.name === "write_file" || toolCall.name === "replace_text") && !result.startsWith("Error")) {
+          const result = await executeTool(tc.name, tc.arguments, absOutputDir, planFile, task.number, commandTimeoutSecs);
+          batchResultCache.set(sig, result);
+          if ((tc.name === "write_file" || tc.name === "replace_text") && !result.startsWith("Error")) {
             filesWritten++;
-            console.log(`    💾 updated ${toolCall.arguments["path"]}`);
-          } else if (toolCall.name === "run_command") {
-            console.log(`    $ ${toolCall.arguments["command"]}`);
+            console.log(`    💾 updated ${tc.arguments["path"]}`);
+          } else if (tc.name === "run_command") {
+            console.log(`    $ ${tc.arguments["command"]}`);
           } else {
-            console.log(`    🔩 ${toolCall.name}(${JSON.stringify(toolCall.arguments).slice(0, 80)})`);
+            console.log(`    🔩 ${tc.name}(${JSON.stringify(tc.arguments).slice(0, 80)})`);
           }
           if (result.startsWith("Error")) {
             console.log(`    ❌ ${result.slice(0, 200)}`);
@@ -327,7 +396,7 @@ export async function runImplementationAgent(
           messages.push({
             role: "tool",
             content: result,
-            toolCallId: toolCall.id,
+            toolCallId: tc.id,
           });
         }
       }
@@ -340,8 +409,9 @@ export async function runImplementationAgent(
     }
   }
 
-  // If loop ended without mark_task_complete
+  // If loop ended without mark_task_complete — mark completed so coordinator doesn't retry in same run
   summary = "Implementation failed: Loop limit reached before completion.";
+  await updateTaskStatus(planFile, task.number, "completed");
   return { summary, usage };
 }
 
@@ -375,7 +445,8 @@ async function executeTool(
       case "read_file": {
         const filePath = resolveAgentPath(String(args["path"] ?? ""), absOutputDir);
         const file = Bun.file(filePath);
-        if (!(await file.exists())) return `Error: File not found: ${args["path"]}`;
+        if (!(await file.exists()))
+          return `Error: File not found: ${args["path"]}. If you need to create this file, use write_file instead of trying to read it again.`;
         const content = await file.text();
         const CAP = 12_000;
         if (content.length > CAP) {
@@ -411,7 +482,9 @@ async function executeTool(
         
         const content = await file.text();
         if (!content.includes(oldStr)) {
-           return `Error: The exact old_string was not found in the file. Ensure you matched indentation and line breaks perfectly.`;
+          const CAP = 3000;
+          const preview = content.length > CAP ? content.slice(0, CAP) + `\n... (truncated, ${content.length - CAP} chars omitted)` : content;
+          return `Error: The exact old_string was not found in ${relPath}. Current file contents:\n\`\`\`\n${preview}\n\`\`\`\nUse write_file to rewrite the entire file if the content has changed significantly.`;
         }
         
         fileBackupCache.set(relPath, content);

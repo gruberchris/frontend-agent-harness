@@ -65,6 +65,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
   if (!(await designFile.exists())) {
     throw new Error(`Design file not found: ${config.designFile}`);
   }
+  const design = await loadDesignContent(config.designFile);
 
   console.log(chalk.bold(`\n🚀 Frontend Design Agent Harness`));
   console.log(chalk.dim(`Design: ${config.designFile}`));
@@ -74,29 +75,37 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
   console.log(chalk.dim(`Output: ${config.outputDir}`));
   console.log(chalk.dim(`Max iterations: ${config.maxEvaluatorIterations}\n`));
 
-  // ── Step 1: Task Agent (initial plan) ───────────────────────────────────────
-  console.log(chalk.bold("📐 Step 1: Task Agent — generating plan.md..."));
-  const design = await loadDesignContent(config.designFile);
+  // ── Startup: resume from plan.md or start fresh ─────────────────────────────
+  const planFile = Bun.file(config.planFile);
+  const planExists = (await planFile.exists()) && (await planFile.text()).trim().length > 0;
 
   let taskAgentUsage = emptyTokenUsage();
   let taskAgentCalls = 0;
 
-  const taskResult = await runTaskAgent(
-    config.agents.taskAgent.model,
-    config.provider,
-    design,
-    config.planFile,
-    config.memoryFile,
-    config.agents.taskAgent.systemPrompt,
-    config.agents.taskAgent.reasoningEffort,
-    config.agents.taskAgent.maxTokens,
-    undefined,
-    config.llmTimeoutSecs,
-  );
-  taskAgentUsage = addTokenUsage(taskAgentUsage, taskResult.usage);
-  taskAgentCalls++;
+  if (planExists) {
+    console.log(chalk.bold("📋 Existing plan.md found — resuming from first incomplete task."));
+    console.log(chalk.dim(`   (Delete ${config.planFile} to start fresh)\n`));
+  } else {
+    console.log(chalk.bold("📐 Step 1: Task Agent — generating plan.md..."));
+    console.log(chalk.dim(`   (No plan.md found — clearing output dir and starting fresh)\n`));
+    await clearDirectory(path.resolve(config.outputDir));
 
-  console.log(chalk.green(`✅ plan.md generated`));
+    const taskResult = await runTaskAgent(
+      config.agents.taskAgent.model,
+      config.provider,
+      design,
+      config.planFile,
+      config.memoryFile,
+      config.agents.taskAgent.systemPrompt,
+      config.agents.taskAgent.reasoningEffort,
+      config.agents.taskAgent.maxTokens,
+      undefined,
+      config.llmTimeoutSecs,
+    );
+    taskAgentUsage = addTokenUsage(taskAgentUsage, taskResult.usage);
+    taskAgentCalls++;
+    console.log(chalk.green(`✅ plan.md generated`));
+  }
 
   // ── Start dev server ─────────────────────────────────────────────────────────
   let devServerHandle: Awaited<ReturnType<typeof startDevServer>> | null = null;
@@ -118,7 +127,6 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
       config.provider,
       design, // re-use loaded design (images already in memory)
       config.planFile,
-      config.memoryFile,
       config.appDir,
       config.agents.implementationAgent.systemPrompt,
       config.agents.implementationAgent.reasoningEffort,
@@ -126,6 +134,10 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
       config.maxToolCallIterations,
       config.commandTimeoutSecs,
       config.llmTimeoutSecs,
+      config.projectContextChars,
+      config.historyTrimThreshold,
+      config.historyTrimKeep,
+      config.agents.implementationAgent.parallelToolCalls,
     );
     implCoordUsage = addTokenUsage(implCoordUsage, coordResult.usage);
     implCoordCalls += coordResult.tasksCompleted;
@@ -200,14 +212,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
     // ── Re-run Task Agent with evaluator feedback ─────────────────────────────
     console.log(chalk.bold(`\n🔄 Re-running Task Agent with evaluator feedback...`));
 
-    let existingFileTree: string | undefined;
-    if (config.resetAppOnRetry) {
-      console.log(chalk.dim(`  Clearing app directory for clean rebuild...`));
-      await clearDirectory(path.resolve(config.appDir));
-      await Bun.write(config.planFile, "");
-    } else {
-      existingFileTree = await readFileTree(path.resolve(config.appDir));
-    }
+    const existingFileTree = await readFileTree(path.resolve(config.appDir));
 
     const reTaskResult = await runTaskAgent(
       config.agents.taskAgent.model,

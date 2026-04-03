@@ -104,6 +104,20 @@ async function buildProjectContext(planFile: string, outputDir: string, contextC
       const content = await readFileCapped(path.join(dirPath, entry.name), 1_500);
       if (content !== null) keyParts.push(`**${rel}**\n\`\`\`\n${content}\n\`\`\``);
     }
+
+    // One extra level deep for any nested subdirectory (e.g. src/utils/, src/hooks/, src/components/).
+    // Use a smaller per-file cap — enough to show exports/signatures — since deeper files are more
+    // numerous. The total contextCap applied at the end still bounds the overall size.
+    const deepFileCap = Math.max(300, Math.floor(contextCap / 40));
+    for (const subEntry of subEntries.filter((e) => e.isDirectory() && !SKIP_DIRS.has(e.name)).slice(0, 4)) {
+      const subDirPath = path.join(dirPath, subEntry.name);
+      const deepEntries = await fs.readdir(subDirPath, { withFileTypes: true }).catch(() => []);
+      for (const deepEntry of deepEntries.filter((e) => e.isFile()).slice(0, 6)) {
+        const rel = `${dir.name}/${subEntry.name}/${deepEntry.name}`;
+        const content = await readFileCapped(path.join(subDirPath, deepEntry.name), deepFileCap);
+        if (content !== null) keyParts.push(`**${rel}**\n\`\`\`\n${content}\n\`\`\``);
+      }
+    }
   }
 
   if (keyParts.length > 0) {

@@ -55,17 +55,31 @@ export async function startDevServer(
       );
     }
 
+    let res: Response | undefined;
     try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(2000) });
-      if (res.ok || res.status < 500) return {
+      res = await fetch(url, { signal: AbortSignal.timeout(2000) });
+    } catch {
+      // not ready yet — connection refused, timeout, etc.
+    }
+
+    if (res) {
+      if (res.ok) return {
         url,
         stop: async () => {
           proc.kill();
           await proc.exited;
         },
       };
-    } catch {
-      // not ready yet
+      // 4xx means the server is up but the app isn't loading — fail immediately
+      // rather than burning the full timeout and handing a broken URL to the evaluator.
+      if (res.status >= 400 && res.status < 500) {
+        proc.kill();
+        await proc.exited;
+        throw new Error(
+          `Dev server returned HTTP ${res.status} for ${url}. The app failed to load — check the build output and static file serving logic.`,
+        );
+      }
+      // 5xx / other: server may still be starting, keep polling
     }
     await Bun.sleep(HEALTH_CHECK_INTERVAL_MS);
   }

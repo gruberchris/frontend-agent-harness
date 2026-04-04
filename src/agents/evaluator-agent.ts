@@ -126,6 +126,9 @@ Use the available Playwright tools to navigate to the application, explore its f
   const LOOP_WINDOW = 10;
   const LOOP_THRESHOLD = 3; // same sig this many times in window = loop
 
+  // When a loop is detected, strip Playwright tools so the model MUST decide.
+  let onlyDecisionTools = false;
+
   // Tool-calling loop
   for (let i = 0; i < maxToolCallIterations; i++) {
     const iterationsLeft = maxToolCallIterations - i - 1;
@@ -139,7 +142,8 @@ Use the available Playwright tools to navigate to the application, explore its f
       });
     }
 
-    const response = await client.chat(messages, availableTools);
+    const toolsForThisTurn = onlyDecisionTools ? DECISION_TOOLS : availableTools;
+    const response = await client.chat(messages, toolsForThisTurn);
     usage = addTokenUsage(usage, response.usage);
 
     messages.push({
@@ -154,7 +158,9 @@ Use the available Playwright tools to navigate to the application, explore its f
       if (iterationsLeft > 0) {
         messages.push({
           role: "user",
-          content: `You responded with text but no tool calls. You have ${iterationsLeft} steps left. Call decide_pass or decide_needs_work immediately if you have finished evaluating. Otherwise use a Playwright tool to continue.`,
+          content: onlyDecisionTools
+            ? `You responded with text but no tool calls. Call decide_pass or decide_needs_work immediately.`
+            : `You responded with text but no tool calls. You have ${iterationsLeft} steps left. Call decide_pass or decide_needs_work immediately if you have finished evaluating. Otherwise use a Playwright tool to continue.`,
         });
         continue;
       }
@@ -281,11 +287,14 @@ Use the available Playwright tools to navigate to the application, explore its f
       });
     }
 
-    // 4. If a loop was detected this turn, demand a decision on the next turn
+    // 4. If a loop was detected this turn, strip Playwright tools and demand a decision.
+    // Setting onlyDecisionTools=true means the next client.chat() call only receives
+    // the two decision tools, so the model cannot call Playwright again.
     if (loopDetectedThisTurn && !decided) {
+      onlyDecisionTools = true;
       messages.push({
         role: "user",
-        content: `⚠️ You are stuck in a loop — repeated identical tool calls were detected and blocked. The page is likely blank or broken. Call decide_needs_work NOW with a description of what you observed and specific corrections for the implementation agent. Do not make any more Playwright tool calls.`,
+        content: `⚠️ You are stuck in a loop — repeated identical tool calls were detected and blocked. The page is likely blank or broken. You no longer have access to Playwright tools. Call decide_needs_work NOW with a description of what you observed and specific corrections for the implementation agent.`,
       });
     }
 

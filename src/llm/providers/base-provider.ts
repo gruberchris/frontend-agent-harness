@@ -21,6 +21,7 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
 
   protected parallelToolCalls?: boolean;
   protected frequencyPenalty?: number;
+  private clientFetchPatched = false;
 
   constructor(model: string, reasoningEffort?: string, maxTokens?: number, llmTimeoutSecs?: number, parallelToolCalls?: boolean, frequencyPenalty?: number, llmStreamTimeoutSecs?: number) {
     this.model = model;
@@ -34,8 +35,41 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
 
   protected abstract initClient(): Promise<void>;
 
+  /**
+   * Patches the SDK's internal fetch to wrap every request with AbortSignal.timeout(llmStreamTimeoutMs).
+   *
+   * The OpenAI SDK's `fetchWithTimeout` only guards the connection/headers phase — it clears its
+   * own timer the moment the HTTP 200 response headers arrive. After that, Bun's native fetch is
+   * sitting on a plain AbortController signal with no deadline, and may apply its own default
+   * socket timeout (~5 min) independently of our configured value.
+   *
+   * By replacing `this.client.fetch` we intercept the actual call to Bun's native `fetch` and pass
+   * a combined `AbortSignal.any([sdkControllerSignal, AbortSignal.timeout(ms)])`. Bun now receives
+   * the timeout directly, so our `llmStreamTimeoutSecs` setting governs the entire streaming phase.
+   */
+  private patchClientFetch(): void {
+    if (this.llmStreamTimeoutMs === undefined || this.clientFetchPatched) return;
+    this.clientFetchPatched = true;
+    const timeoutMs = this.llmStreamTimeoutMs;
+    const sdk = this.client as unknown as { fetch: typeof globalThis.fetch };
+    const nativeFetch = sdk.fetch; // globalThis.fetch — capture before we replace it
+    sdk.fetch = Object.assign(
+      (url: Parameters<typeof globalThis.fetch>[0], init?: Parameters<typeof globalThis.fetch>[1]) => {
+        const timeoutSignal = AbortSignal.timeout(timeoutMs);
+        const signal = init?.signal
+          ? AbortSignal.any([init.signal as AbortSignal, timeoutSignal])
+          : timeoutSignal;
+        return nativeFetch.call(undefined, url, { ...init, signal });
+      },
+      nativeFetch, // carry over any extra properties (e.g. Bun's fetch.preconnect)
+    ) as typeof globalThis.fetch;
+  }
+
   async chat(messages: LLMMessage[], tools?: ToolDefinition[]): Promise<LLMResponse> {
-    if (!this.client) await this.initClient();
+    if (!this.client) {
+      await this.initClient();
+      this.patchClientFetch();
+    }
 
     const openaiMessages = messages.map((m) => {
       let content: string | unknown[];
@@ -144,11 +178,11 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
           stream_options: { include_usage: true },
         } as Parameters<typeof this.client.chat.completions.create>[0],
         {
-          // timeout: covers the initial response-headers phase (cleared by the SDK once headers arrive).
-          // signal: AbortSignal.timeout covers the FULL streaming duration — the SDK wires it to
-          //         the same abort controller, so it will abort mid-stream if the model is too slow.
+          // timeout: covers the initial connection/headers phase only — the SDK clears this timer
+          // the moment HTTP response headers arrive. The full streaming duration is governed by the
+          // fetch wrapper installed by patchClientFetch(), which passes AbortSignal.timeout directly
+          // to Bun's native fetch so it applies for the entire response body.
           ...(this.llmTimeoutMs !== undefined && { timeout: this.llmTimeoutMs }),
-          ...(this.llmStreamTimeoutMs !== undefined && { signal: AbortSignal.timeout(this.llmStreamTimeoutMs) }),
         },
       ) as unknown as AsyncIterable<StreamChunk>;
 

@@ -53,6 +53,7 @@
   "maxEvaluatorIterations": 3,
   "maxToolCallIterations": 50,
   "maxTaskRetries": 2,
+  "maxConsecutiveLoops": 3,
 
   "commandTimeoutSecs": 120,
   "llmTimeoutSecs": 300,

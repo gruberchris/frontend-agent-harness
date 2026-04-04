@@ -164,6 +164,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
       config.agents.implementationAgent.frequencyPenalty,
       config.maxTaskRetries,
       config.llmStreamTimeoutSecs,
+      config.maxConsecutiveLoops,
     );
     implCoordUsage = addTokenUsage(implCoordUsage, coordResult.usage);
     implCoordCalls += coordResult.tasksCompleted;

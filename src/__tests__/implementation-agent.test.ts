@@ -629,3 +629,65 @@ describe("agent path normalization", () => {
     expect(await correctFile.text()).toBe("// main");
   });
 });
+
+describe("consecutive-loop abort", () => {
+  test("aborts early when model ignores loop warnings for maxConsecutiveLoops iterations", async () => {
+    // Model always returns the same run_command call — never fixes itself, never completes
+    mock.module("../llm/create-client.ts", () => ({
+      createLLMClient: () => ({
+        async chat() {
+          return {
+            content: null,
+            toolCalls: [
+              { id: "r1", name: "run_command", arguments: { command: "echo stuck" } },
+            ],
+            usage: { promptTokens: 50, completionTokens: 10, totalTokens: 60 },
+            finishReason: "tool_calls" as const,
+          };
+        },
+      }),
+    }));
+
+    delete require.cache[require.resolve("../agents/implementation-agent.ts")];
+    const { runImplementationAgent } = await import("../agents/implementation-agent.ts");
+
+    const tmpPlanFile = `/tmp/consec-loop-plan-${Date.now()}.md`;
+    const tmpOutputDir = `/tmp/consec-loop-output-${Date.now()}`;
+    trackedFiles.push(tmpPlanFile, tmpOutputDir);
+
+    await Bun.write(
+      tmpPlanFile,
+      `### Task 1: Setup\n**Status**: pending\n**Description**: Init\n**Acceptance Criteria**: Done\n**Example Code**:\n\`\`\`\n// code\n\`\`\`\n`,
+    );
+    // Pre-create a file so the "no files" guard doesn't block mark_task_complete paths
+    await fs.mkdir(tmpOutputDir, { recursive: true });
+    await Bun.write(`${tmpOutputDir}/placeholder.txt`, "exists");
+
+    const task = {
+      number: 1, title: "Setup", status: "pending" as const,
+      description: "Init", acceptanceCriteria: "Done", exampleCode: "", raw: "",
+    };
+
+    const result = await runImplementationAgent(
+      "gpt-4o", { type: "copilot" }, task, { text: "# Design", images: [] },
+      tmpPlanFile, tmpOutputDir, undefined, "You are a coding agent.",
+      undefined, undefined,
+      50,             // maxToolCallIterations — high so we don't hit this limit
+      120,            // commandTimeoutSecs
+      undefined,      // llmTimeoutSecs
+      30, 15,         // trim thresholds
+      undefined,      // parallelToolCalls
+      undefined,      // frequencyPenalty
+      undefined,      // llmStreamTimeoutSecs
+      2,              // maxConsecutiveLoops — abort after 2 consecutive detections
+    );
+
+    // Should fail fast with the consecutive-loop message, not the generic loop-limit message
+    expect(result.summary).toContain("Implementation failed: model stuck in loop");
+    expect(result.summary).not.toContain("Loop limit reached before completion");
+
+    // Plan should be marked failed
+    const updatedPlan = await Bun.file(tmpPlanFile).text();
+    expect(updatedPlan).toContain("**Status**: failed");
+  });
+});

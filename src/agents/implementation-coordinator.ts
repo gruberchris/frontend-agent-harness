@@ -153,6 +153,7 @@ export async function runImplementationCoordinator(
   frequencyPenalty?: number,
   maxTaskRetries = 2,
   llmStreamTimeoutSecs?: number,
+  maxConsecutiveLoops?: number,
 ): Promise<CoordinatorResult> {
   let totalUsage = emptyTokenUsage();
   let tasksCompleted = 0;
@@ -208,6 +209,7 @@ export async function runImplementationCoordinator(
       parallelToolCalls,
       frequencyPenalty,
       llmStreamTimeoutSecs,
+      maxConsecutiveLoops,
     );
 
     totalUsage = addTokenUsage(totalUsage, result.usage);
@@ -307,6 +309,7 @@ export async function runImplementationCoordinator(
         parallelToolCalls,
         frequencyPenalty,
         llmStreamTimeoutSecs,
+        maxConsecutiveLoops,
       );
 
       totalUsage = addTokenUsage(totalUsage, repairResult.usage);

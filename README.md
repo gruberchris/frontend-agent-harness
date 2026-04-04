@@ -144,6 +144,8 @@ All settings live in `config.json`. Every field is optional — omitting a field
 | `projectContextChars` | integer ≥ 500 | *(derived)* | Max characters of project snapshot per task. Auto-derived from `implementationAgent.contextWindow`; set explicitly to override. |
 | `historyTrimThreshold` | integer ≥ 4 | *(derived)* | Trim conversation history when message count exceeds this. Auto-derived from `implementationAgent.contextWindow`. |
 | `historyTrimKeep` | integer ≥ 2 | *(derived)* | Messages to keep after trimming. Auto-derived from `implementationAgent.contextWindow`. |
+| `maxTaskRetries` | integer ≥ 1 | `2` | How many times to retry a failed task before permanently aborting the pipeline. |
+| `maxConsecutiveLoops` | integer ≥ 1 | `3` | Consecutive loop-detection hits before aborting the task early. When the model ignores loop warnings for this many iterations in a row, the agent stops immediately rather than burning more LLM calls. The task is marked failed and the coordinator retries it. |
 
 ### Startup resume behavior
 

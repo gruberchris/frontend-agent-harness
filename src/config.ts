@@ -37,6 +37,8 @@ export const HarnessConfigSchema = z.object({
   historyTrimKeep: z.number().int().min(2).optional(),
   /** Number of times to retry a task that fails before permanently marking it failed and aborting the pipeline (default 2). */
   maxTaskRetries: z.number().int().min(1).optional(),
+  /** Consecutive loop-detection hits before aborting the task early instead of injecting more warnings (default 3). */
+  maxConsecutiveLoops: z.number().int().min(1).optional(),
   devServer: z.object({
     port: z.number().int().min(1).max(65535),
     startCommand: z.string(),
@@ -63,6 +65,7 @@ const DEFAULTS: HarnessConfig = {
   llmTimeoutSecs: 300,
   llmStreamTimeoutSecs: 1800,
   maxTaskRetries: 2,
+  maxConsecutiveLoops: 3,
   outputDir: "./output",
   appDir: "./output/app",
   designFile: "./input/design.md",
@@ -205,6 +208,7 @@ export async function loadConfig(configPath: string): Promise<HarnessConfig> {
     ...(raw["historyTrimThreshold"] !== undefined && { historyTrimThreshold: raw["historyTrimThreshold"] as number }),
     ...(raw["historyTrimKeep"] !== undefined && { historyTrimKeep: raw["historyTrimKeep"] as number }),
     ...(raw["maxTaskRetries"] !== undefined && { maxTaskRetries: raw["maxTaskRetries"] as number }),
+    ...(raw["maxConsecutiveLoops"] !== undefined && { maxConsecutiveLoops: raw["maxConsecutiveLoops"] as number }),
     devServer: { ...DEFAULTS.devServer, ...((raw["devServer"] as RawConfig) ?? {}) },
     playwright: { ...DEFAULTS.playwright, ...((raw["playwright"] as RawConfig) ?? {}) } as HarnessConfig["playwright"],
     agents: {

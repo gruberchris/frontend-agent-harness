@@ -171,6 +171,8 @@ export async function runImplementationAgent(
   parallelToolCalls?: boolean,
   frequencyPenalty?: number,
   llmStreamTimeoutSecs?: number,
+  /** Consecutive loop-detection hits before aborting the task early (default 3). Prevents wasting iterations on a stuck model. */
+  maxConsecutiveLoops = 3,
 ): Promise<ImplementationAgentResult> {
   const client = createLLMClient(providerConfig, model, reasoningEffort, maxTokens, llmTimeoutSecs, parallelToolCalls, frequencyPenalty, llmStreamTimeoutSecs);
   let usage = emptyTokenUsage();
@@ -215,6 +217,7 @@ export async function runImplementationAgent(
   const recentSignatures: string[] = [];
   const LOOP_WINDOW = 12; // signatures to keep
   const CYCLE_LENGTHS = [1, 2, 3]; // detect cycles of these lengths
+  let consecutiveLoopCount = 0; // how many iterations in a row triggered loop detection
 
   // Tool-calling loop
   for (let i = 0; i < maxToolCallIterations; i++) {
@@ -332,6 +335,7 @@ export async function runImplementationAgent(
     }
 
     if (overusedCall || detectedCycleLength > 0) {
+      consecutiveLoopCount++;
       const isReplaceText = uniqueCalls.every(({ tc }) => tc.name === "replace_text");
       const isReadFile = uniqueCalls.every(({ tc }) => tc.name === "read_file");
       const loopDesc = overusedCall
@@ -342,6 +346,15 @@ export async function runImplementationAgent(
         : isReadFile
         ? "STOP reading files. You have already read these files. Make a decision: call write_file to update a file, or call mark_task_complete if the work is done."
         : "STOP repeating these calls. Make a decision: call write_file to update a file, or call mark_task_complete if the core work is done.";
+
+      // Hard abort: the model is stuck and ignoring warnings — cut losses now.
+      if (consecutiveLoopCount > maxConsecutiveLoops) {
+        console.log(`    ❌ Aborting task: model stuck in loop for ${consecutiveLoopCount} consecutive iteration(s) (${loopDesc})`);
+        summary = `Implementation failed: model stuck in loop (${loopDesc}) for ${consecutiveLoopCount} consecutive iterations.`;
+        await updateTaskStatus(planFile, task.number, "failed");
+        return { summary, usage };
+      }
+
       // Reply to every tool call in the batch (API requirement), but use a one-liner for duplicates.
       const seenInLoop = new Set<string>();
       for (const { tc, sig } of annotated) {
@@ -362,7 +375,14 @@ export async function runImplementationAgent(
         content: `⚠️ LOOP DETECTED (${loopDesc}). ${suggestion} You have ${iterationsLeft} iteration(s) remaining.`,
       });
       interceptedLoop = true;
-      console.log(`    ⚠️  Loop detected: ${loopDesc}`);
+      // Only print the first few detections; after that suppress to avoid console spam.
+      if (consecutiveLoopCount <= 3) {
+        console.log(`    ⚠️  Loop detected: ${loopDesc}`);
+      } else if (consecutiveLoopCount === 4) {
+        console.log(`    ⚠️  Loop detected: ${loopDesc} (further warnings suppressed)`);
+      }
+    } else {
+      consecutiveLoopCount = 0; // clean iteration — reset the consecutive counter
     }
 
     if (!interceptedLoop) {

@@ -21,8 +21,8 @@ async function resolveToken(): Promise<string> {
 }
 
 export class CopilotProvider extends OpenAICompatibleProvider {
-  constructor(model: string, reasoningEffort?: string, maxTokens?: number, llmTimeoutSecs?: number, parallelToolCalls?: boolean, frequencyPenalty?: number) {
-    super(model, reasoningEffort, maxTokens, llmTimeoutSecs, parallelToolCalls, frequencyPenalty);
+  constructor(model: string, reasoningEffort?: string, maxTokens?: number, llmTimeoutSecs?: number, parallelToolCalls?: boolean, frequencyPenalty?: number, llmStreamTimeoutSecs?: number) {
+    super(model, reasoningEffort, maxTokens, llmTimeoutSecs, parallelToolCalls, frequencyPenalty, llmStreamTimeoutSecs);
   }
 
   protected async initClient(): Promise<void> {

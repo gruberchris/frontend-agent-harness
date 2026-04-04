@@ -246,3 +246,67 @@ describe("design image stripping", () => {
     expect(contentTypes[1]).toBe("array"); // task 2: "Style" → UI task, images kept
   });
 });
+
+describe("task retry on permanent failure", () => {
+  test("retries a failing task maxTaskRetries times then returns permanentlyFailedTask", async () => {
+    let llmCallCount = 0;
+
+    // Override LLM mock: always write a file but never call mark_task_complete
+    // so the implementation agent always hits its loop limit and fails.
+    mock.module("../llm/create-client.ts", () => ({
+      createLLMClient: () => ({
+        async chat() {
+          llmCallCount++;
+          return {
+            content: null,
+            toolCalls: [
+              { id: "w1", name: "write_file", arguments: { path: "dummy.html", content: "<p>x</p>" } },
+            ],
+            usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+            finishReason: "tool_calls" as const,
+          };
+        },
+      }),
+    }));
+
+    const singleTaskPlan = `## Tech Stack\n- **Framework**: React\n\n---\n\n### Task 1: Failing task\n**Status**: pending\n**Description**: This always fails\n**Acceptance Criteria**: Never met\n**Example Code**:\n\`\`\`\n\`\`\`\n`;
+    const tmpPlan = `/tmp/retry-plan-${Date.now()}.md`;
+    const tmpOutput = `/tmp/retry-out-${Date.now()}`;
+    trackedFiles.push(tmpPlan, tmpOutput);
+    await Bun.write(tmpPlan, singleTaskPlan);
+
+    const { runImplementationCoordinator } = await import("../agents/implementation-coordinator.ts");
+    const result = await runImplementationCoordinator(
+      "gpt-4o",
+      { type: "copilot" },
+      { text: "# Design", images: [] },
+      tmpPlan,
+      tmpOutput,
+      "sys",
+      undefined, // reasoningEffort
+      undefined, // maxTokens
+      1,         // maxToolCallIterations: 1 iteration so agent fails fast
+      undefined, // commandTimeoutSecs
+      undefined, // llmTimeoutSecs
+      undefined, // projectContextChars
+      undefined, // historyTrimThreshold
+      undefined, // historyTrimKeep
+      undefined, // parallelToolCalls
+      undefined, // frequencyPenalty
+      2,         // maxTaskRetries: 2 total attempts
+    );
+
+    // Should have permanently failed after 2 attempts
+    expect(result.permanentlyFailedTask).toBeDefined();
+    expect(result.permanentlyFailedTask!.number).toBe(1);
+    expect(result.permanentlyFailedTask!.title).toBe("Failing task");
+    expect(result.tasksCompleted).toBe(0);
+
+    // LLM was called once per attempt (1 iteration × 2 attempts)
+    expect(llmCallCount).toBe(2);
+
+    // Task must be marked "failed" (not "completed") in plan.md
+    const planContent = await Bun.file(tmpPlan).text();
+    expect(planContent).toContain("**Status**: failed");
+  });
+});

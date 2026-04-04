@@ -84,6 +84,12 @@ describe("parseTasks", () => {
     expect(tasks[2]!.status).toBe("in_progress");
   });
 
+  test("parses 'failed' status correctly", () => {
+    const planWithFailed = SAMPLE_PLAN.replace("**Status**: pending", "**Status**: failed");
+    const tasks = parseTasks(planWithFailed);
+    expect(tasks[0]!.status).toBe("failed");
+  });
+
   test("parses descriptions", () => {
     const tasks = parseTasks(SAMPLE_PLAN);
     expect(tasks[0]!.description).toContain("Initialize a React");
@@ -141,6 +147,36 @@ describe("getNextPendingTask", () => {
       .replace(/\*\*Status\*\*: in_progress/g, "**Status**: completed");
 
     const tmpFile = `/tmp/plan-test-${Date.now()}.md`;
+    await Bun.write(tmpFile, allComplete);
+
+    const { getNextPendingTask } = await import("../plan/plan-parser.ts");
+    const task = await getNextPendingTask(tmpFile);
+    expect(task).toBeNull();
+  });
+
+  test("returns a failed task (treats it as retryable)", async () => {
+    const withFailed = SAMPLE_PLAN
+      .replace(/\*\*Status\*\*: pending/g, "**Status**: failed")
+      .replace(/\*\*Status\*\*: in_progress/g, "**Status**: completed");
+
+    const tmpFile = `/tmp/plan-test-failed-${Date.now()}.md`;
+    trackedFiles.push(tmpFile);
+    await Bun.write(tmpFile, withFailed);
+
+    const { getNextPendingTask } = await import("../plan/plan-parser.ts");
+    const task = await getNextPendingTask(tmpFile);
+    expect(task).not.toBeNull();
+    expect(task!.number).toBe(1);
+    expect(task!.status).toBe("failed");
+  });
+
+  test("returns null when all tasks are completed (none failed or pending)", async () => {
+    const allComplete = SAMPLE_PLAN
+      .replace(/\*\*Status\*\*: pending/g, "**Status**: completed")
+      .replace(/\*\*Status\*\*: in_progress/g, "**Status**: completed");
+
+    const tmpFile = `/tmp/plan-test-no-failed-${Date.now()}.md`;
+    trackedFiles.push(tmpFile);
     await Bun.write(tmpFile, allComplete);
 
     const { getNextPendingTask } = await import("../plan/plan-parser.ts");

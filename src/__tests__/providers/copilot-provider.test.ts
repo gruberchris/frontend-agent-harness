@@ -6,18 +6,14 @@ let capturedCreateArgs: unknown;
 
 const mockCreate = mock(async (args: unknown) => {
   capturedCreateArgs = args;
-  return {
-    choices: [
-      {
-        message: {
-          content: "Hello from Copilot",
-          tool_calls: [],
-        },
-        finish_reason: "stop",
-      },
-    ],
-    usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
-  };
+  async function* stream() {
+    yield {
+      choices: [{ index: 0, delta: { content: "Hello from Copilot", tool_calls: null }, finish_reason: "stop" }],
+      usage: null,
+    };
+    yield { choices: [], usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } };
+  }
+  return stream();
 });
 
 mock.module("openai", () => {

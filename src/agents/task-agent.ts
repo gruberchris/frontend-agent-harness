@@ -23,8 +23,9 @@ export async function runTaskAgent(
   llmTimeoutSecs?: number,
   correctionMode?: boolean,
   nextTaskNumber?: number,
+  llmStreamTimeoutSecs?: number,
 ): Promise<TaskAgentResult> {
-  const client = createLLMClient(providerConfig, model, reasoningEffort, maxTokens, llmTimeoutSecs);
+  const client = createLLMClient(providerConfig, model, reasoningEffort, maxTokens, llmTimeoutSecs, undefined, undefined, llmStreamTimeoutSecs);
   const usage = emptyTokenUsage();
 
   const existingMemory = (await Bun.file(memoryFile).exists()) ? await Bun.file(memoryFile).text() : "";

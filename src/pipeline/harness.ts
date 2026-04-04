@@ -5,7 +5,7 @@ import { startDevServer } from "../server/dev-server.ts";
 import { printReport, type AgentStepStats, type PipelineReport } from "./reporting.ts";
 import { addTokenUsage, emptyTokenUsage } from "../llm/types.ts";
 import { loadDesignContent } from "../design/design-loader.ts";
-import { readTasks } from "../plan/plan-parser.ts";
+import { readTasks, updateTaskStatus } from "../plan/plan-parser.ts";
 import type { HarnessConfig } from "../config.ts";
 import chalk from "chalk";
 import * as fs from "node:fs/promises";
@@ -84,7 +84,26 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
   let taskAgentCalls = 0;
 
   if (planExists) {
-    console.log(chalk.bold("📋 Existing plan.md found — resuming from first incomplete task."));
+    // On re-run, the task agent re-assigns all incomplete tasks (failed, in_progress,
+    // or never-started pending) back to "pending" in task-number order, so the
+    // coordinator processes them cleanly from lowest to highest regardless of whatever
+    // status they had when the previous run ended.
+    const existingTasks = await readTasks(config.planFile);
+    const incompleteTasks = existingTasks.filter((t) => t.status !== "completed");
+
+    if (incompleteTasks.length > 0) {
+      console.log(
+        chalk.bold(
+          `📋 Existing plan.md found — re-assigning ${incompleteTasks.length} incomplete task(s) in order.`,
+        ),
+      );
+      for (const task of incompleteTasks) {
+        await updateTaskStatus(config.planFile, task.number, "pending");
+        console.log(chalk.dim(`   Task ${task.number}: ${task.title} (was: ${task.status})`));
+      }
+    } else {
+      console.log(chalk.bold("📋 Existing plan.md found — all tasks already completed."));
+    }
     console.log(chalk.dim(`   (Delete ${config.planFile} to start fresh)\n`));
   } else {
     console.log(chalk.bold("📐 Step 1: Task Agent — generating plan.md..."));
@@ -102,6 +121,9 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
       config.agents.taskAgent.maxTokens,
       undefined,
       config.llmTimeoutSecs,
+      undefined,
+      undefined,
+      config.llmStreamTimeoutSecs,
     );
     taskAgentUsage = addTokenUsage(taskAgentUsage, taskResult.usage);
     taskAgentCalls++;
@@ -140,9 +162,25 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
       config.historyTrimKeep,
       config.agents.implementationAgent.parallelToolCalls,
       config.agents.implementationAgent.frequencyPenalty,
+      config.maxTaskRetries,
+      config.llmStreamTimeoutSecs,
     );
     implCoordUsage = addTokenUsage(implCoordUsage, coordResult.usage);
     implCoordCalls += coordResult.tasksCompleted;
+
+    // ── Guard: abort if a task permanently failed ────────────────────────────
+    if (coordResult.permanentlyFailedTask) {
+      const { number, title } = coordResult.permanentlyFailedTask;
+      console.log();
+      console.log(
+        chalk.red(
+          `❌ Task ${number} ("${title}") permanently failed after ${config.maxTaskRetries} attempt(s). Pipeline cannot continue.`,
+        ),
+      );
+      result = "FAILURE";
+      resultReason = `Task ${number} ("${title}") permanently failed after ${config.maxTaskRetries} attempt(s) without completing.`;
+      break;
+    }
 
     console.log(
       chalk.green(`✅ Implementation complete (${coordResult.tasksCompleted} tasks done)`),
@@ -189,6 +227,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
       devServerError,
       config.llmTimeoutSecs,
       config.maxToolCallIterations,
+      config.llmStreamTimeoutSecs,
     );
     evaluatorUsage = addTokenUsage(evaluatorUsage, evalResult.usage);
     evaluatorCalls++;
@@ -234,6 +273,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
       config.llmTimeoutSecs,
       true, // correctionMode — appends tasks instead of replacing the plan
       nextTaskNumber,
+      config.llmStreamTimeoutSecs,
     );
     taskAgentUsage = addTokenUsage(taskAgentUsage, reTaskResult.usage);
     taskAgentCalls++;

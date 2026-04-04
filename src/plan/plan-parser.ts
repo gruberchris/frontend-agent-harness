@@ -15,7 +15,7 @@ export async function readPlanHeader(planFile: string): Promise<string> {
 }
 
 const TASK_HEADER_RE = /^###\s+Task\s+(\d+):\s+(.+)$/m;
-const STATUS_RE = /^\*\*Status\*\*:\s*(pending|in_progress|completed)\s*$/m;
+const STATUS_RE = /^\*\*Status\*\*:\s*(pending|in_progress|completed|failed)\s*$/m;
 const DESCRIPTION_RE = /^\*\*Description\*\*:\s*([\s\S]*?)(?=\*\*Acceptance Criteria\*\*|\*\*Example Code\*\*|^---|\Z)/m;
 const ACCEPTANCE_RE = /^\*\*Acceptance Criteria\*\*:\s*([\s\S]*?)(?=\*\*Example Code\*\*|^---|\Z)/m;
 const EXAMPLE_CODE_RE = /^\*\*Example Code\*\*:\s*([\s\S]*?)(?=^---|\Z)/m;
@@ -80,7 +80,8 @@ export async function readTasks(planFile: string): Promise<PlanTask[]> {
 export async function getNextPendingTask(planFile: string): Promise<PlanTask | null> {
   const tasks = await readTasks(planFile);
   // Treat in_progress as resumable — if a prior run was interrupted mid-task, pick it up again.
-  return tasks.find((t) => t.status === "pending" || t.status === "in_progress") ?? null;
+  // Treat failed as retryable — the coordinator will retry up to maxTaskRetries times.
+  return tasks.find((t) => t.status === "pending" || t.status === "in_progress" || t.status === "failed") ?? null;
 }
 
 export async function updateTaskStatus(

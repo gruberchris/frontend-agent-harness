@@ -73,8 +73,9 @@ export async function runEvaluatorAgent(
   devServerError?: string,
   llmTimeoutSecs?: number,
   maxToolCallIterations = 40,
+  llmStreamTimeoutSecs?: number,
 ): Promise<EvaluatorResult> {
-  const client = createLLMClient(providerConfig, model, reasoningEffort, maxTokens, llmTimeoutSecs);
+  const client = createLLMClient(providerConfig, model, reasoningEffort, maxTokens, llmTimeoutSecs, undefined, undefined, llmStreamTimeoutSecs);
   let usage = emptyTokenUsage();
 
   // Skip Playwright entirely when we know the dev server is down — no point navigating

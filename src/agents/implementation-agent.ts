@@ -170,8 +170,9 @@ export async function runImplementationAgent(
   /** When false, passes parallel_tool_calls=false to the API to force one tool call per response. */
   parallelToolCalls?: boolean,
   frequencyPenalty?: number,
+  llmStreamTimeoutSecs?: number,
 ): Promise<ImplementationAgentResult> {
-  const client = createLLMClient(providerConfig, model, reasoningEffort, maxTokens, llmTimeoutSecs, parallelToolCalls, frequencyPenalty);
+  const client = createLLMClient(providerConfig, model, reasoningEffort, maxTokens, llmTimeoutSecs, parallelToolCalls, frequencyPenalty, llmStreamTimeoutSecs);
   let usage = emptyTokenUsage();
 
   const absOutputDir = path.resolve(outputDir);
@@ -244,7 +245,16 @@ export async function runImplementationAgent(
       messages.push(system, firstUser, { role: "user", content: "(Earlier conversation trimmed to fit context window. Continue from the most recent state above.)" }, ...recent);
     }
 
-    const response = await client.chat(messages, IMPL_TOOLS);
+    let response: Awaited<ReturnType<typeof client.chat>>;
+    try {
+      response = await client.chat(messages, IMPL_TOOLS);
+    } catch (err) {
+      const msg = `LLM network error: ${String(err)}`;
+      console.log(`    ❌ ${msg}`);
+      summary = `Implementation failed: ${msg}`;
+      await updateTaskStatus(planFile, task.number, "failed");
+      return { summary, usage };
+    }
     usage = addTokenUsage(usage, response.usage);
 
     // If parallel_tool_calls:false isn't honored by the provider (e.g. LM Studio + Gemma4),
@@ -357,6 +367,18 @@ export async function runImplementationAgent(
 
     if (!interceptedLoop) {
       for (const { tc, sig, isDup } of annotated) {
+        // Guard: tool call JSON was truncated (model hit maxTokens mid-stream).
+        if (tc.arguments["__malformed"]) {
+          console.log(`    ⚠️  Truncated tool call: ${tc.name} — JSON was cut off (maxTokens too small?)`);
+          messages.push({
+            role: "tool",
+            content:
+              "Error: Your tool call arguments were cut off (JSON was incomplete). This means your response was too long. Please try again and write less content per file, or split the work across multiple smaller write_file calls.",
+            toolCallId: tc.id,
+          });
+          continue;
+        }
+
         if (tc.name === "mark_task_complete") {
           // Guard: refuse completion if no work has been done at all (no files exist in output dir)
           if (filesWritten === 0) {
@@ -419,9 +441,9 @@ export async function runImplementationAgent(
     }
   }
 
-  // If loop ended without mark_task_complete — mark completed so coordinator doesn't retry in same run
+  // If loop ended without mark_task_complete — mark failed so the coordinator retries up to maxTaskRetries times
   summary = "Implementation failed: Loop limit reached before completion.";
-  await updateTaskStatus(planFile, task.number, "completed");
+  await updateTaskStatus(planFile, task.number, "failed");
   return { summary, usage };
 }
 
@@ -467,6 +489,7 @@ async function executeTool(
 
       case "write_file": {
         const relPath = String(args["path"] ?? "");
+        if (!relPath) return "Error: write_file requires a 'path' argument — none was provided.";
         const filePath = resolveAgentPath(relPath, absOutputDir);
         await fs.mkdir(path.dirname(filePath), { recursive: true });
         

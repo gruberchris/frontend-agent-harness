@@ -1,0 +1,73 @@
+{
+  "__instructions": "Copy this file to config.json and edit as needed. All fields shown here are optional — omitted fields fall back to the defaults listed in README.md.",
+
+  "provider": {
+    "__comment": "Choose ONE provider block and remove the others (and this __comment key).",
+
+    "copilot": {
+      "type": "copilot",
+      "__note": "Requires GITHUB_TOKEN in .env (OAuth token from `gh auth login`, not a PAT)"
+    },
+
+    "lm-studio": {
+      "type": "lm-studio",
+      "baseUrl": "http://localhost:1234",
+      "__note": "No credentials needed. Start LM Studio and load a model before running."
+    },
+
+    "ollama": {
+      "type": "ollama",
+      "baseUrl": "http://localhost:11434",
+      "__note": "No credentials needed. Run `ollama pull <model>` before starting."
+    },
+
+    "azure": {
+      "type": "azure",
+      "endpoint": "https://your-resource.openai.azure.com",
+      "apiVersion": "2024-12-01-preview",
+      "__note": "Requires AZURE_OPENAI_API_KEY or AZURE_OPENAI_BEARER_TOKEN in .env"
+    }
+  },
+
+  "agents": {
+    "taskAgent": {
+      "model": "gpt-4o",
+      "maxTokens": 8192
+    },
+    "implementationCoordinator": {
+      "model": "gpt-4.1"
+    },
+    "implementationAgent": {
+      "model": "gpt-4o",
+      "maxTokens": 8192,
+      "contextWindow": 128000,
+      "parallelToolCalls": true,
+      "frequencyPenalty": 0.0
+    },
+    "evaluatorAgent": {
+      "model": "gpt-4o",
+      "maxTokens": 4096
+    }
+  },
+
+  "maxEvaluatorIterations": 3,
+  "maxToolCallIterations": 50,
+  "maxTaskRetries": 2,
+
+  "commandTimeoutSecs": 120,
+  "llmTimeoutSecs": 300,
+  "llmStreamTimeoutSecs": 1800,
+
+  "devServer": {
+    "port": 3000,
+    "startCommand": "bun run dev"
+  },
+
+  "playwright": {
+    "headless": true,
+    "browser": "chrome"
+  },
+
+  "designFile": "./input/design.md",
+  "outputDir": "./output"
+}

@@ -22,6 +22,8 @@ export const HarnessConfigSchema = z.object({
   maxToolCallIterations: z.number().int().min(1),
   commandTimeoutSecs: z.number().int().min(10),
   llmTimeoutSecs: z.number().int().min(10),
+  /** Max total wall-clock seconds for a streaming LLM response (headers + full generation). Must be ≥ llmTimeoutSecs. */
+  llmStreamTimeoutSecs: z.number().int().min(10).optional(),
   outputDir: z.string(),
   appDir: z.string(),
   designFile: z.string(),
@@ -33,6 +35,8 @@ export const HarnessConfigSchema = z.object({
   historyTrimThreshold: z.number().int().min(4).optional(),
   /** Number of recent messages to keep after trimming (default 15). Lower for small context windows. */
   historyTrimKeep: z.number().int().min(2).optional(),
+  /** Number of times to retry a task that fails before permanently marking it failed and aborting the pipeline (default 2). */
+  maxTaskRetries: z.number().int().min(1).optional(),
   devServer: z.object({
     port: z.number().int().min(1).max(65535),
     startCommand: z.string(),
@@ -57,6 +61,8 @@ const DEFAULTS: HarnessConfig = {
   maxToolCallIterations: 20,
   commandTimeoutSecs: 120,
   llmTimeoutSecs: 300,
+  llmStreamTimeoutSecs: 1800,
+  maxTaskRetries: 2,
   outputDir: "./output",
   appDir: "./output/app",
   designFile: "./input/design.md",
@@ -187,6 +193,9 @@ export async function loadConfig(configPath: string): Promise<HarnessConfig> {
     ...(raw["commandTimeoutSecs"] !== undefined && {
       commandTimeoutSecs: raw["commandTimeoutSecs"] as number,
     }),
+    ...(raw["llmStreamTimeoutSecs"] !== undefined && {
+      llmStreamTimeoutSecs: raw["llmStreamTimeoutSecs"] as number,
+    }),
     ...(raw["outputDir"] !== undefined && { outputDir: raw["outputDir"] as string }),
     ...(raw["appDir"] !== undefined && { appDir: raw["appDir"] as string }),
     ...(raw["designFile"] !== undefined && { designFile: raw["designFile"] as string }),
@@ -195,6 +204,7 @@ export async function loadConfig(configPath: string): Promise<HarnessConfig> {
     ...(raw["projectContextChars"] !== undefined && { projectContextChars: raw["projectContextChars"] as number }),
     ...(raw["historyTrimThreshold"] !== undefined && { historyTrimThreshold: raw["historyTrimThreshold"] as number }),
     ...(raw["historyTrimKeep"] !== undefined && { historyTrimKeep: raw["historyTrimKeep"] as number }),
+    ...(raw["maxTaskRetries"] !== undefined && { maxTaskRetries: raw["maxTaskRetries"] as number }),
     devServer: { ...DEFAULTS.devServer, ...((raw["devServer"] as RawConfig) ?? {}) },
     playwright: { ...DEFAULTS.playwright, ...((raw["playwright"] as RawConfig) ?? {}) } as HarnessConfig["playwright"],
     agents: {

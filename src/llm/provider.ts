@@ -10,11 +10,11 @@ export const ProviderConfigSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("ollama"),
-    baseUrl: z.string().optional(),
+    baseUrl: z.string().url().optional(),
   }),
   z.object({
     type: z.literal("lm-studio"),
-    baseUrl: z.string().optional(),
+    baseUrl: z.string().url().optional(),
   }),
 ]);
 

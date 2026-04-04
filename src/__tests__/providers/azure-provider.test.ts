@@ -32,12 +32,14 @@ class TestAzureProvider extends AzureProvider {
         completions: {
           create: mock(async (args: Record<string, unknown>) => {
             self.capturedCreateArgs.push(args);
-            return {
-              choices: [
-                { message: { content: "Azure response", tool_calls: [] }, finish_reason: "stop" },
-              ],
-              usage: { prompt_tokens: 20, completion_tokens: 8, total_tokens: 28 },
-            };
+            async function* stream() {
+              yield {
+                choices: [{ index: 0, delta: { content: "Azure response", tool_calls: null }, finish_reason: "stop" }],
+                usage: null,
+              };
+              yield { choices: [], usage: { prompt_tokens: 20, completion_tokens: 8, total_tokens: 28 } };
+            }
+            return stream();
           }),
         },
       },

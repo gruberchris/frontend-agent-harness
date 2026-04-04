@@ -10,9 +10,12 @@ Usage:
   bun run index.ts [options]
 
 Options:
-  --design <path>   Path to design.md  (default: ./input/design.md)
-  --config <path>   Path to config.json (default: ./config.json)
-  --help            Show this help message
+  --design <path>        Path to design.md  (default: ./input/design.md)
+  --config <path>        Path to config.json (default: ./config.json)
+  --provider-url <url>   Override the host URL for ollama or lm-studio providers
+                         (e.g. http://192.168.1.100:11434 or http://10.0.0.5:1234)
+                         Has no effect for copilot or azure providers.
+  --help                 Show this help message
 
 Environment Variables:
   GITHUB_TOKEN      GitHub OAuth token with Copilot access (optional if 'gh auth login' is used)
@@ -20,6 +23,7 @@ Environment Variables:
 
 Example:
   bun run index.ts --design ./my-app-design.md --config ./config.json
+  bun run index.ts --provider-url http://192.168.1.100:11434
 `;
 
 /** Paths to check per browser on macOS and Linux/Windows */
@@ -72,8 +76,8 @@ async function checkBrowserAvailable(config: HarnessConfig): Promise<void> {
 }
 
 
-function parseArgs(args: string[]): { design?: string; config?: string; help: boolean } {
-  const result: { design?: string; config?: string; help: boolean } = { help: false };
+function parseArgs(args: string[]): { design?: string; config?: string; providerUrl?: string; help: boolean } {
+  const result: { design?: string; config?: string; providerUrl?: string; help: boolean } = { help: false };
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--help" || args[i] === "-h") {
       result.help = true;
@@ -81,6 +85,8 @@ function parseArgs(args: string[]): { design?: string; config?: string; help: bo
       result.design = args[++i];
     } else if (args[i] === "--config" && args[i + 1]) {
       result.config = args[++i];
+    } else if (args[i] === "--provider-url" && args[i + 1]) {
+      result.providerUrl = args[++i];
     }
   }
   return result;
@@ -113,6 +119,14 @@ async function main() {
 
   // CLI flags override config file
   if (args.design) config.designFile = args.design;
+
+  if (args.providerUrl) {
+    if (config.provider.type === "ollama" || config.provider.type === "lm-studio") {
+      config.provider.baseUrl = args.providerUrl;
+    } else {
+      console.warn(chalk.yellow(`Warning: --provider-url has no effect for the '${config.provider.type}' provider.`));
+    }
+  }
 
   // Pre-flight: verify the browser is installed before spending tokens
   await checkBrowserAvailable(config);

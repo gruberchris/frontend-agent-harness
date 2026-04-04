@@ -139,7 +139,8 @@ All settings live in `config.json`. Every field is optional — omitting a field
 | `maxEvaluatorIterations` | integer ≥ 1 | `3` | Maximum number of evaluate → fix cycles before the pipeline stops with FAILURE |
 | `maxToolCallIterations` | integer ≥ 1 | `20` | Maximum tool calls the implementation agent may make per task |
 | `commandTimeoutSecs` | integer ≥ 10 | `120` | Timeout (seconds) for shell commands run by the implementation agent |
-| `llmTimeoutSecs` | integer ≥ 10 | `300` | Timeout (seconds) for each LLM API call |
+| `llmTimeoutSecs` | integer ≥ 10 | `300` | Timeout (seconds) to receive the first response bytes from the LLM (connection phase). Cleared once streaming begins. |
+| `llmStreamTimeoutSecs` | integer ≥ 10 | `1800` | Total wall-clock timeout (seconds) for a complete LLM response including the full streaming generation. Increase for large local models that generate slowly. If unset, falls back to `llmTimeoutSecs`. |
 | `projectContextChars` | integer ≥ 500 | *(derived)* | Max characters of project snapshot per task. Auto-derived from `implementationAgent.contextWindow`; set explicitly to override. |
 | `historyTrimThreshold` | integer ≥ 4 | *(derived)* | Trim conversation history when message count exceeds this. Auto-derived from `implementationAgent.contextWindow`. |
 | `historyTrimKeep` | integer ≥ 2 | *(derived)* | Messages to keep after trimming. Auto-derived from `implementationAgent.contextWindow`. |

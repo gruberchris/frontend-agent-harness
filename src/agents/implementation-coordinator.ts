@@ -1,5 +1,5 @@
 import { addTokenUsage, emptyTokenUsage, type TokenUsage } from "../llm/types.ts";
-import { getNextPendingTask, readPlanHeader, readTasks, appendTasks } from "../plan/plan-parser.ts";
+import { getNextPendingTask, readPlanHeader, readTasks, appendTasks, updateTaskStatus } from "../plan/plan-parser.ts";
 import { runImplementationAgent } from "./implementation-agent.ts";
 import { type DesignContent } from "../design/design-loader.ts";
 import { findBrokenReferences } from "../validation/reference-checker.ts";
@@ -12,6 +12,8 @@ import * as fs from "node:fs/promises";
 export interface CoordinatorResult {
   tasksCompleted: number;
   usage: TokenUsage;
+  /** Set when a task permanently fails after exhausting all retry attempts. */
+  permanentlyFailedTask?: { number: number; title: string };
 }
 
 async function buildFileTree(
@@ -149,9 +151,15 @@ export async function runImplementationCoordinator(
   historyTrimKeep?: number,
   parallelToolCalls?: boolean,
   frequencyPenalty?: number,
+  maxTaskRetries = 2,
+  llmStreamTimeoutSecs?: number,
 ): Promise<CoordinatorResult> {
   let totalUsage = emptyTokenUsage();
   let tasksCompleted = 0;
+  let permanentlyFailedTask: CoordinatorResult["permanentlyFailedTask"];
+
+  // Tracks how many times each task (by number) has been attempted.
+  const retryCount = new Map<number, number>();
 
   while (true) {
     const nextTask = await getNextPendingTask(planFile);
@@ -162,7 +170,15 @@ export async function runImplementationCoordinator(
       break;
     }
 
-    console.log(chalk.cyan(`\n▶️  Implementing Task ${nextTask.number}: ${nextTask.title}`));
+    const attempts = retryCount.get(nextTask.number) ?? 0;
+
+    // Mark in_progress before each attempt (including retries) so that "failed"
+    // is cleared from plan.md while the agent is actively working. This ensures
+    // only one task — the permanently failed one — is ever left in "failed" state.
+    await updateTaskStatus(planFile, nextTask.number, "in_progress");
+
+    const attemptLabel = attempts === 0 ? "" : ` (retry ${attempts}/${maxTaskRetries - 1})`;
+    console.log(chalk.cyan(`\n▶️  Implementing Task ${nextTask.number}: ${nextTask.title}${attemptLabel}`));
 
     const projectContext = await buildProjectContext(planFile, outputDir, projectContextChars);
 
@@ -191,86 +207,113 @@ export async function runImplementationCoordinator(
       historyTrimKeep,
       parallelToolCalls,
       frequencyPenalty,
+      llmStreamTimeoutSecs,
     );
 
     totalUsage = addTokenUsage(totalUsage, result.usage);
-    tasksCompleted++;
 
     const failed = result.summary.startsWith("Implementation failed");
     if (failed) {
-      console.log(chalk.yellow(`  ⚠️  Task ${nextTask.number} incomplete: ${result.summary}`));
+      const newAttempts = attempts + 1;
+      retryCount.set(nextTask.number, newAttempts);
+
+      if (newAttempts >= maxTaskRetries) {
+        // Task has exhausted all retry attempts — leave it as "failed" in plan.md
+        // (the implementation agent already set it). Break immediately; no further
+        // tasks run, so this is the only task that will ever be permanently "failed".
+        console.log(
+          chalk.red(
+            `  ❌ Task ${nextTask.number} permanently failed after ${newAttempts} attempt(s): ${result.summary}`,
+          ),
+        );
+        permanentlyFailedTask = { number: nextTask.number, title: nextTask.title };
+        break;
+      }
+
+      console.log(
+        chalk.yellow(
+          `  ⚠️  Task ${nextTask.number} incomplete (attempt ${newAttempts}/${maxTaskRetries}): ${result.summary}`,
+        ),
+      );
+      // Task is now "failed" in plan.md; getNextPendingTask will return it again
+      // on the next loop iteration for an immediate retry.
     } else {
+      tasksCompleted++;
       console.log(chalk.green(`  ✅ Task ${nextTask.number} completed: ${result.summary}`));
     }
   }
 
   // ── Post-implementation reference validation & repair ──────────────────────
-  // Scan ALL generated files for broken local references (HTML src/href,
-  // TS/JS imports, CSS @import). If any are found, append a repair task to
-  // plan.md and run the implementation agent so status updates work correctly.
-  const absOutputDir = path.resolve(outputDir);
-  const brokenRefs = await findBrokenReferences(absOutputDir);
-  if (brokenRefs.length > 0) {
-    const list = brokenRefs
-      .map((r) => `- \`${r.missingFile}\` (referenced in \`${r.inFile}\`)`)
-      .join("\n");
-    console.log(chalk.yellow(`\n⚠️  Found ${brokenRefs.length} broken reference(s) — running repair pass...`));
-    brokenRefs.forEach((r) => console.log(chalk.dim(`    missing: ${r.missingFile} ← ${r.inFile}`)));
+  // Skip if a task permanently failed — the pipeline will abort anyway.
+  if (!permanentlyFailedTask) {
+    // Scan ALL generated files for broken local references (HTML src/href,
+    // TS/JS imports, CSS @import). If any are found, append a repair task to
+    // plan.md and run the implementation agent so status updates work correctly.
+    const absOutputDir = path.resolve(outputDir);
+    const brokenRefs = await findBrokenReferences(absOutputDir);
+    if (brokenRefs.length > 0) {
+      const list = brokenRefs
+        .map((r) => `- \`${r.missingFile}\` (referenced in \`${r.inFile}\`)`)
+        .join("\n");
+      console.log(chalk.yellow(`\n⚠️  Found ${brokenRefs.length} broken reference(s) — running repair pass...`));
+      brokenRefs.forEach((r) => console.log(chalk.dim(`    missing: ${r.missingFile} ← ${r.inFile}`)));
 
-    // Derive task number from actual plan so we don't conflict with existing tasks
-    const existingTasks = await readTasks(planFile);
-    const repairNumber = existingTasks.reduce((max, t) => Math.max(max, t.number), 0) + 1;
+      // Derive task number from actual plan so we don't conflict with existing tasks
+      const existingTasks = await readTasks(planFile);
+      const repairNumber = existingTasks.reduce((max, t) => Math.max(max, t.number), 0) + 1;
 
-    const repairTask: PlanTask = {
-      number: repairNumber,
-      title: "Repair: Create missing referenced files",
-      status: "pending",
-      description:
-        `The following files are referenced by the app but do not exist on disk:\n${list}\n\n` +
-        `Read each referencing file to understand what the missing file should contain, then create it.`,
-      acceptanceCriteria: "All referenced files exist and the app compiles without errors.",
-      exampleCode: "",
-      raw: "",
-    };
+      const repairTask: PlanTask = {
+        number: repairNumber,
+        title: "Repair: Create missing referenced files",
+        status: "pending",
+        description:
+          `The following files are referenced by the app but do not exist on disk:\n${list}\n\n` +
+          `Read each referencing file to understand what the missing file should contain, then create it.`,
+        acceptanceCriteria: "All referenced files exist and the app compiles without errors.",
+        exampleCode: "",
+        raw: "",
+      };
 
-    // Append repair task to plan.md so updateTaskStatus can find it
-    const repairBlock = [
-      `### Task ${repairTask.number}: ${repairTask.title}`,
-      `**Status**: pending`,
-      `**Description**: ${repairTask.description}`,
-      `**Acceptance Criteria**: ${repairTask.acceptanceCriteria}`,
-      `**Example Code**:`,
-      "```",
-      "",
-      "```",
-    ].join("\n");
-    await appendTasks(planFile, repairBlock);
+      // Append repair task to plan.md so updateTaskStatus can find it
+      const repairBlock = [
+        `### Task ${repairTask.number}: ${repairTask.title}`,
+        `**Status**: pending`,
+        `**Description**: ${repairTask.description}`,
+        `**Acceptance Criteria**: ${repairTask.acceptanceCriteria}`,
+        `**Example Code**:`,
+        "```",
+        "",
+        "```",
+      ].join("\n");
+      await appendTasks(planFile, repairBlock);
 
-    const repairContext = await buildProjectContext(planFile, outputDir, projectContextChars);
-    const repairResult = await runImplementationAgent(
-      model,
-      providerConfig,
-      repairTask,
-      { ...design, images: [] }, // no images needed for a repair pass
-      planFile,
-      outputDir,
-      repairContext,
-      systemPrompt,
-      reasoningEffort,
-      maxTokens,
-      maxToolCallIterations,
-      commandTimeoutSecs,
-      llmTimeoutSecs,
-      historyTrimThreshold,
-      historyTrimKeep,
-      parallelToolCalls,
-      frequencyPenalty,
-    );
+      const repairContext = await buildProjectContext(planFile, outputDir, projectContextChars);
+      const repairResult = await runImplementationAgent(
+        model,
+        providerConfig,
+        repairTask,
+        { ...design, images: [] }, // no images needed for a repair pass
+        planFile,
+        outputDir,
+        repairContext,
+        systemPrompt,
+        reasoningEffort,
+        maxTokens,
+        maxToolCallIterations,
+        commandTimeoutSecs,
+        llmTimeoutSecs,
+        historyTrimThreshold,
+        historyTrimKeep,
+        parallelToolCalls,
+        frequencyPenalty,
+        llmStreamTimeoutSecs,
+      );
 
-    totalUsage = addTokenUsage(totalUsage, repairResult.usage);
-    tasksCompleted++;
-    console.log(chalk.green(`  ✅ Repair pass: ${repairResult.summary}`));
+      totalUsage = addTokenUsage(totalUsage, repairResult.usage);
+      tasksCompleted++;
+      console.log(chalk.green(`  ✅ Repair pass: ${repairResult.summary}`));
+    }
   }
 
-  return { tasksCompleted, usage: totalUsage };
+  return { tasksCompleted, usage: totalUsage, permanentlyFailedTask };
 }

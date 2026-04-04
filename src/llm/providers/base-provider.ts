@@ -14,6 +14,7 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
   protected reasoningEffort?: string;
   protected maxTokens?: number;
   protected llmTimeoutMs?: number;
+  protected llmStreamTimeoutMs?: number;
   protected readonly supportsReasoningEffort: boolean = true;
   /** Parameter name for the token limit. Subclasses may override to "max_completion_tokens". */
   protected readonly maxTokensParamName: string = "max_tokens";
@@ -21,11 +22,12 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
   protected parallelToolCalls?: boolean;
   protected frequencyPenalty?: number;
 
-  constructor(model: string, reasoningEffort?: string, maxTokens?: number, llmTimeoutSecs?: number, parallelToolCalls?: boolean, frequencyPenalty?: number) {
+  constructor(model: string, reasoningEffort?: string, maxTokens?: number, llmTimeoutSecs?: number, parallelToolCalls?: boolean, frequencyPenalty?: number, llmStreamTimeoutSecs?: number) {
     this.model = model;
     this.reasoningEffort = reasoningEffort;
     this.maxTokens = maxTokens;
     this.llmTimeoutMs = llmTimeoutSecs !== undefined ? llmTimeoutSecs * 1000 : undefined;
+    this.llmStreamTimeoutMs = llmStreamTimeoutSecs !== undefined ? llmStreamTimeoutSecs * 1000 : this.llmTimeoutMs;
     this.parallelToolCalls = parallelToolCalls;
     this.frequencyPenalty = frequencyPenalty;
   }
@@ -88,8 +90,10 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
     let frameIdx = 0;
     const tickerStart = Date.now();
     let ticker: ReturnType<typeof setInterval> | undefined;
+    let spin = () => {};
     if (process.stdout.isTTY) {
-      const spin = () => {
+      process.stdout.write("\x1B[?25l"); // hide cursor during spinner
+      spin = () => {
         const elapsed = Math.round((Date.now() - tickerStart) / 1000);
         const frame = FRAMES[frameIdx++ % FRAMES.length];
         process.stdout.write(`\r    ${frame} 🤔 ${elapsed}s `);
@@ -98,66 +102,126 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
       ticker = setInterval(spin, 100);
     }
 
-    let response: Awaited<ReturnType<typeof this.client.chat.completions.create>>;
+    // Streaming chunk shape (subset we care about)
+    type StreamChunk = {
+      choices: Array<{
+        index: number;
+        delta: {
+          content?: string | null;
+          tool_calls?: Array<{
+            index: number;
+            id?: string;
+            function?: { name?: string; arguments?: string };
+          }> | null;
+        };
+        finish_reason: string | null;
+      }>;
+      usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null;
+    };
+
+    let content = "";
+    let finishReason: LLMResponse["finishReason"] = "stop";
+    const toolCallsAcc = new Map<number, { id: string; name: string; arguments: string }>();
+    let usage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+    let hasChoices = false;
+
     try {
-      response = await this.client.chat.completions.create({
-        model: this.model,
-        messages: openaiMessages as Parameters<typeof this.client.chat.completions.create>[0]["messages"],
-        tools: openaiTools,
-        tool_choice: openaiTools ? "auto" : undefined,
-        ...(this.parallelToolCalls === false && { parallel_tool_calls: false }),
-        ...(this.frequencyPenalty !== undefined && { frequency_penalty: this.frequencyPenalty }),
-        ...(this.supportsReasoningEffort && this.reasoningEffort && {
-          reasoning_effort: this.reasoningEffort as "low" | "medium" | "high",
-        }),
-        ...(this.maxTokens && { [this.maxTokensParamName]: this.maxTokens }),
-      }, {
-        ...(this.llmTimeoutMs !== undefined && { timeout: this.llmTimeoutMs }),
-      });
+      // stream: true keeps the connection alive with a continuous flow of tokens,
+      // preventing proxy/network idle-timeouts that would kill a long non-streaming request.
+      const stream = await this.client.chat.completions.create(
+        {
+          model: this.model,
+          messages: openaiMessages as Parameters<typeof this.client.chat.completions.create>[0]["messages"],
+          tools: openaiTools,
+          tool_choice: openaiTools ? "auto" : undefined,
+          ...(this.parallelToolCalls === false && { parallel_tool_calls: false }),
+          ...(this.frequencyPenalty !== undefined && { frequency_penalty: this.frequencyPenalty }),
+          ...(this.supportsReasoningEffort && this.reasoningEffort && {
+            reasoning_effort: this.reasoningEffort as "low" | "medium" | "high",
+          }),
+          ...(this.maxTokens && { [this.maxTokensParamName]: this.maxTokens }),
+          stream: true,
+          stream_options: { include_usage: true },
+        } as Parameters<typeof this.client.chat.completions.create>[0],
+        {
+          // timeout: covers the initial response-headers phase (cleared by the SDK once headers arrive).
+          // signal: AbortSignal.timeout covers the FULL streaming duration — the SDK wires it to
+          //         the same abort controller, so it will abort mid-stream if the model is too slow.
+          ...(this.llmTimeoutMs !== undefined && { timeout: this.llmTimeoutMs }),
+          ...(this.llmStreamTimeoutMs !== undefined && { signal: AbortSignal.timeout(this.llmStreamTimeoutMs) }),
+        },
+      ) as unknown as AsyncIterable<StreamChunk>;
+
+      for await (const chunk of stream) {
+        if (chunk.usage) {
+          usage = {
+            promptTokens: chunk.usage.prompt_tokens ?? 0,
+            completionTokens: chunk.usage.completion_tokens ?? 0,
+            totalTokens: chunk.usage.total_tokens ?? 0,
+          };
+          if (chunk.usage.completion_tokens) { /* usage captured above */ }
+        }
+
+        const choice = chunk.choices[0];
+        if (!choice) continue;
+        hasChoices = true;
+
+        if (choice.delta.content) {
+          content += choice.delta.content;
+          spin();
+        }
+        if (choice.finish_reason) finishReason = choice.finish_reason as LLMResponse["finishReason"];
+
+        for (const tc of choice.delta.tool_calls ?? []) {
+          const acc = toolCallsAcc.get(tc.index) ?? { id: "", name: "", arguments: "" };
+          if (tc.id) acc.id = tc.id;
+          if (tc.function?.name) acc.name += tc.function.name;
+          if (tc.function?.arguments) {
+            acc.arguments += tc.function.arguments;
+            spin();
+          }
+          toolCallsAcc.set(tc.index, acc);
+        }
+      }
     } finally {
       if (ticker !== undefined) {
         clearInterval(ticker);
         // Erase the spinner line entirely — no trace left in the scrollback.
         const cols = process.stdout.columns ?? 80;
         process.stdout.write("\r" + " ".repeat(cols) + "\r");
+        process.stdout.write("\x1B[?25h"); // restore cursor
       }
     }
 
-    const choice = response.choices[0];
-    if (!choice) {
-      const finishReason = (response as { finish_reason?: string }).finish_reason;
+    if (!hasChoices) {
       throw new Error(
-        `LLM returned no choices (model: ${this.model}, finish_reason: ${finishReason ?? "none"}).` +
+        `LLM returned no choices (model: ${this.model}).` +
         ` This usually means the context window was exceeded or the request was filtered.`,
       );
     }
 
-    const toolCalls = (choice.message.tool_calls ?? []).map((tc) => {
-      const fn = (tc as { function: { name: string; arguments: string } }).function;
-      return {
+    const toolCalls = [...toolCallsAcc.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([, tc]) => ({
         id: tc.id,
-        name: fn.name,
+        name: tc.name,
         arguments: (() => {
           try {
-            return JSON.parse(fn.arguments) as Record<string, unknown>;
+            return JSON.parse(tc.arguments) as Record<string, unknown>;
           } catch {
-            return {};
+            // JSON was truncated (model hit maxTokens mid-stream). Flag it so
+            // callers can send an error back to the model rather than calling
+            // the tool with missing arguments.
+            return { __malformed: true } as Record<string, unknown>;
           }
         })(),
-      };
-    });
-
-    const usage: TokenUsage = {
-      promptTokens: response.usage?.prompt_tokens ?? 0,
-      completionTokens: response.usage?.completion_tokens ?? 0,
-      totalTokens: response.usage?.total_tokens ?? 0,
-    };
+      }));
 
     return {
-      content: choice.message.content ?? null,
+      content: content || null,
       toolCalls,
       usage,
-      finishReason: (choice.finish_reason as LLMResponse["finishReason"]) ?? "stop",
+      finishReason: finishReason ?? "stop",
     };
   }
 }

@@ -5,15 +5,14 @@ let capturedCreateArgs: Record<string, unknown> | undefined;
 
 const mockCreate = mock(async (args: unknown) => {
   capturedCreateArgs = args as Record<string, unknown>;
-  return {
-    choices: [
-      {
-        message: { content: "LM Studio response", tool_calls: [] },
-        finish_reason: "stop",
-      },
-    ],
-    usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 },
-  };
+  async function* stream() {
+    yield {
+      choices: [{ index: 0, delta: { content: "LM Studio response", tool_calls: null }, finish_reason: "stop" }],
+      usage: null,
+    };
+    yield { choices: [], usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 } };
+  }
+  return stream();
 });
 
 mock.module("openai", () => {

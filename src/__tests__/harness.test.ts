@@ -8,6 +8,11 @@ afterEach(async () => {
     await fs.rm(f, { force: true, recursive: true }).catch(() => {});
   }
   trackedFiles.length = 0;
+  // Reset coordinator result to the default happy path after each test
+  coordResult = {
+    tasksCompleted: 1,
+    usage: { promptTokens: 500, completionTokens: 1000, totalTokens: 1500 },
+  };
 });
 
 // Full pipeline harness integration tests with all agents mocked
@@ -34,11 +39,17 @@ console.log("hello");
 }));
 
 mock.module("../agents/implementation-coordinator.ts", () => ({
-  runImplementationCoordinator: mock(async () => ({
-    tasksCompleted: 1,
-    usage: { promptTokens: 500, completionTokens: 1000, totalTokens: 1500 },
-  })),
+  runImplementationCoordinator: mock(async () => coordResult),
 }));
+
+let coordResult: {
+  tasksCompleted: number;
+  usage: { promptTokens: number; completionTokens: number; totalTokens: number };
+  permanentlyFailedTask?: { number: number; title: string };
+} = {
+  tasksCompleted: 1,
+  usage: { promptTokens: 500, completionTokens: 1000, totalTokens: 1500 },
+};
 
 let evalCallCount = 0;
 let evalShouldPass = true;
@@ -298,5 +309,146 @@ console.log("hello");
     expect(taskAgentMock.mock.calls.length).toBeGreaterThanOrEqual(1);
     // Stale file should have been cleared
     expect(await Bun.file(`${tmpAppDir}/stale.txt`).exists()).toBe(false);
+  });
+});
+
+describe("runHarness - permanently failed task", () => {
+  test("does not call evaluator and reports FAILURE when a task permanently fails", async () => {
+    evalCallCount = 0;
+    evalShouldPass = true;
+
+    // Simulate the coordinator returning a permanently failed task
+    coordResult = {
+      tasksCompleted: 0,
+      usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+      permanentlyFailedTask: { number: 3, title: "Build the widget" },
+    };
+
+    const tmpDesignFile = `/tmp/harness-design-pfail-${Date.now()}.md`;
+    const tmpPlanFile = `/tmp/harness-plan-pfail-${Date.now()}.md`;
+    const tmpOutputDir = `/tmp/harness-output-pfail-${Date.now()}`;
+    trackedFiles.push(tmpDesignFile, tmpPlanFile, tmpOutputDir);
+    await Bun.write(tmpDesignFile, "# Design doc");
+
+    const { runHarness } = await import("../pipeline/harness.ts");
+
+    const report = await runHarness({
+      maxEvaluatorIterations: 3,
+      maxToolCallIterations: 20,
+      commandTimeoutSecs: 120,
+      llmTimeoutSecs: 300,
+      maxTaskRetries: 2,
+      outputDir: tmpOutputDir,
+      appDir: tmpOutputDir + "/app",
+      designFile: tmpDesignFile,
+      planFile: tmpPlanFile,
+      memoryFile: tmpOutputDir + "/memory.md",
+      devServer: { port: 3005, startCommand: "bun run dev" },
+      playwright: { headless: true, browser: "chrome" },
+      provider: { type: "copilot" },
+
+      agents: {
+        taskAgent: { model: "gpt-4o", systemPrompt: "You are an architect." },
+        implementationCoordinator: { model: "gpt-4.1", systemPrompt: "You are a coordinator." },
+        implementationAgent: { model: "gpt-4o", systemPrompt: "You are a coder." },
+        evaluatorAgent: { model: "gpt-4o", systemPrompt: "You are an evaluator." },
+      },
+    });
+
+    // Pipeline must report failure
+    expect(report.result).toBe("FAILURE");
+    expect(report.resultReason).toContain("Build the widget");
+    expect(report.resultReason).toContain("permanently failed");
+
+    // Evaluator must NOT have been called — the pipeline should abort before reaching it
+    expect(evalCallCount).toBe(0);
+  });
+});
+
+describe("runHarness - re-run resets incomplete tasks", () => {
+  test("resets failed and pending tasks to pending in task-number order on re-run", async () => {
+    evalCallCount = 0;
+    evalShouldPass = true;
+    evalPassFromCallN = 1;
+
+    const tmpDesignFile = `/tmp/harness-design-rerun-${Date.now()}.md`;
+    const tmpOutputDir = `/tmp/harness-output-rerun-${Date.now()}`;
+    const tmpAppDir = `${tmpOutputDir}/app`;
+    const tmpPlanFile = `${tmpOutputDir}/plan.md`;
+    const tmpMemoryFile = `${tmpOutputDir}/memory.md`;
+    trackedFiles.push(tmpDesignFile, tmpOutputDir);
+
+    await Bun.write(tmpDesignFile, "# Design doc");
+    await fs.mkdir(tmpOutputDir, { recursive: true });
+
+    // Pre-write a plan.md with mixed statuses — task 2 completed, task 3 failed, task 4 pending
+    await Bun.write(
+      tmpPlanFile,
+      `### Task 2: First task
+**Status**: completed
+**Description**: Already done
+**Acceptance Criteria**: Done
+**Example Code**:
+\`\`\`typescript
+// done
+\`\`\`
+
+### Task 3: Widget builder
+**Status**: failed
+**Description**: Build the widget
+**Acceptance Criteria**: Widget exists
+**Example Code**:
+\`\`\`typescript
+// widget
+\`\`\`
+
+### Task 4: Final task
+**Status**: pending
+**Description**: Finish it up
+**Acceptance Criteria**: All done
+**Example Code**:
+\`\`\`typescript
+// finish
+\`\`\`
+`,
+    );
+
+    const { runTaskAgent: mockTaskAgent } = await import("../agents/task-agent.ts");
+    const taskAgentMock = mockTaskAgent as ReturnType<typeof mock>;
+    taskAgentMock.mockClear();
+
+    const { runHarness } = await import("../pipeline/harness.ts");
+
+    const report = await runHarness({
+      maxEvaluatorIterations: 3,
+      maxToolCallIterations: 20,
+      commandTimeoutSecs: 120,
+      llmTimeoutSecs: 300,
+      outputDir: tmpOutputDir,
+      appDir: tmpAppDir,
+      designFile: tmpDesignFile,
+      planFile: tmpPlanFile,
+      memoryFile: tmpMemoryFile,
+      devServer: { port: 3006, startCommand: "bun run dev" },
+      playwright: { headless: true, browser: "chrome" },
+      provider: { type: "copilot" },
+
+      agents: {
+        taskAgent: { model: "gpt-4o", systemPrompt: "You are an architect." },
+        implementationCoordinator: { model: "gpt-4.1", systemPrompt: "You are a coordinator." },
+        implementationAgent: { model: "gpt-4o", systemPrompt: "You are a coder." },
+        evaluatorAgent: { model: "gpt-4o", systemPrompt: "You are an evaluator." },
+      },
+    });
+
+    expect(report.result).toBe("SUCCESS");
+    // Task agent must NOT have been called — we resumed from existing plan.md
+    expect(taskAgentMock.mock.calls.length).toBe(0);
+
+    // Completed task must remain completed; failed and pending must be reset to pending
+    const planContent = await Bun.file(tmpPlanFile).text();
+    expect(planContent).toMatch(/### Task 2:.*\n\*\*Status\*\*: completed/s);
+    expect(planContent).toMatch(/### Task 3:.*\n\*\*Status\*\*: pending/s);
+    expect(planContent).toMatch(/### Task 4:.*\n\*\*Status\*\*: pending/s);
   });
 });

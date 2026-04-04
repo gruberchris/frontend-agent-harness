@@ -136,4 +136,38 @@ describe("loadConfig", () => {
 
     expect(async () => loadConfig(tmpFile)).toThrow();
   });
+
+  test("accepts valid remote baseUrl for ollama provider", async () => {
+    const tmpFile = `/tmp/config-test-ollama-url-${Date.now()}.json`;
+    trackedFiles.push(tmpFile);
+    await Bun.write(tmpFile, JSON.stringify({ provider: { type: "ollama", baseUrl: "http://192.168.1.100:11434" } }));
+
+    const config = await loadConfig(tmpFile);
+    expect(config.provider).toEqual({ type: "ollama", baseUrl: "http://192.168.1.100:11434" });
+  });
+
+  test("accepts valid remote baseUrl for lm-studio provider", async () => {
+    const tmpFile = `/tmp/config-test-lms-url-${Date.now()}.json`;
+    trackedFiles.push(tmpFile);
+    await Bun.write(tmpFile, JSON.stringify({ provider: { type: "lm-studio", baseUrl: "http://10.0.0.5:1234" } }));
+
+    const config = await loadConfig(tmpFile);
+    expect(config.provider).toEqual({ type: "lm-studio", baseUrl: "http://10.0.0.5:1234" });
+  });
+
+  test("rejects invalid baseUrl for ollama provider", async () => {
+    const tmpFile = `/tmp/config-test-ollama-bad-url-${Date.now()}.json`;
+    trackedFiles.push(tmpFile);
+    await Bun.write(tmpFile, JSON.stringify({ provider: { type: "ollama", baseUrl: "not-a-url" } }));
+
+    expect(async () => loadConfig(tmpFile)).toThrow();
+  });
+
+  test("rejects invalid baseUrl for lm-studio provider", async () => {
+    const tmpFile = `/tmp/config-test-lms-bad-url-${Date.now()}.json`;
+    trackedFiles.push(tmpFile);
+    await Bun.write(tmpFile, JSON.stringify({ provider: { type: "lm-studio", baseUrl: "not-a-url" } }));
+
+    expect(async () => loadConfig(tmpFile)).toThrow();
+  });
 });

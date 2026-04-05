@@ -243,7 +243,9 @@ export async function runImplementationAgent(
       // a preceding `assistant` message with `tool_calls`. If an assistant+tools
       // batch straddles the cut point, advance past the orphaned tool messages so
       // the slice always begins at a clean turn boundary.
-      let recentStart = messages.length - historyTrimKeep;
+      // Clamp to ≥ 2 so recentStart never goes negative (keep > threshold mismatch)
+      // and never lands on the system (0) or first-user (1) messages.
+      let recentStart = Math.max(2, messages.length - historyTrimKeep);
       while (recentStart < messages.length && messages[recentStart]!.role === "tool") {
         recentStart++;
       }

@@ -242,7 +242,11 @@ export async function loadConfig(configPath: string): Promise<HarnessConfig> {
     const derived = deriveContextParams(implContextWindow);
     merged.projectContextChars ??= derived.projectContextChars;
     merged.historyTrimThreshold ??= derived.historyTrimThreshold;
-    merged.historyTrimKeep ??= derived.historyTrimKeep;
+    // Derive historyTrimKeep from the *final* historyTrimThreshold so that an
+    // explicitly set threshold is always respected. Without this, a large
+    // contextWindow can produce a keep value larger than the threshold, making
+    // recentStart negative and crashing the trim logic.
+    merged.historyTrimKeep ??= Math.max(4, Math.round(merged.historyTrimThreshold / 2));
   }
 
   return HarnessConfigSchema.parse(merged);

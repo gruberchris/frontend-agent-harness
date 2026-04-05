@@ -73,7 +73,7 @@ describe("loadConfig", () => {
     expect(config.agents.implementationAgent.systemPrompt).toBeDefined();
     expect(config.agents.implementationAgent.systemPrompt).toContain("implementation");
     expect(config.agents.evaluatorAgent.systemPrompt).toBeDefined();
-    expect(config.agents.evaluatorAgent.systemPrompt).toContain("Audit");
+    expect(config.agents.evaluatorAgent.systemPrompt).toContain("QA");
   });
 
   test("merges custom systemPrompt from config file", async () => {

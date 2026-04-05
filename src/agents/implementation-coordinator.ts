@@ -1,9 +1,7 @@
 import { addTokenUsage, emptyTokenUsage, type TokenUsage } from "../llm/types.ts";
-import { getNextPendingTask, readPlanHeader, readTasks, appendTasks, updateTaskStatus } from "../plan/plan-parser.ts";
+import { getNextPendingTask, readPlanHeader, updateTaskStatus } from "../plan/plan-parser.ts";
 import { runImplementationAgent } from "./implementation-agent.ts";
 import { type DesignContent } from "../design/design-loader.ts";
-import { findBrokenReferences } from "../validation/reference-checker.ts";
-import type { PlanTask } from "../plan/types.ts";
 import type { ProviderConfig } from "../llm/provider.ts";
 import chalk from "chalk";
 import * as path from "node:path";
@@ -175,7 +173,7 @@ export async function runImplementationCoordinator(
 
     // Mark in_progress before each attempt (including retries) so that "failed"
     // is cleared from plan.md while the agent is actively working. This ensures
-    // only one task — the permanently failed one — is ever left in "failed" state.
+    // only one task — the permanently failed one — is ever left in the "failed" state.
     await updateTaskStatus(planFile, nextTask.number, "in_progress");
 
     const attemptLabel = attempts === 0 ? "" : ` (retry ${attempts}/${maxTaskRetries - 1})`;
@@ -183,7 +181,7 @@ export async function runImplementationCoordinator(
 
     const projectContext = await buildProjectContext(planFile, outputDir, projectContextChars);
 
-    // Send design images only for the first task or visually-focused tasks.
+    // Send design images only for the first task or visually focused tasks.
     // Resending large base64 images on every task wastes significant tokens.
     const isUiTask = /layout|style|css|ui|visual|design|component|theme|color|icon/i.test(nextTask.title);
     const taskDesign: DesignContent = (tasksCompleted === 0 || isUiTask)
@@ -242,79 +240,6 @@ export async function runImplementationCoordinator(
     } else {
       tasksCompleted++;
       console.log(chalk.green(`  ✅ Task ${nextTask.number} completed: ${result.summary}`));
-    }
-  }
-
-  // ── Post-implementation reference validation & repair ──────────────────────
-  // Skip if a task permanently failed — the pipeline will abort anyway.
-  if (!permanentlyFailedTask) {
-    // Scan ALL generated files for broken local references (HTML src/href,
-    // TS/JS imports, CSS @import). If any are found, append a repair task to
-    // plan.md and run the implementation agent so status updates work correctly.
-    const absOutputDir = path.resolve(outputDir);
-    const brokenRefs = await findBrokenReferences(absOutputDir);
-    if (brokenRefs.length > 0) {
-      const list = brokenRefs
-        .map((r) => `- \`${r.missingFile}\` (referenced in \`${r.inFile}\`)`)
-        .join("\n");
-      console.log(chalk.yellow(`\n⚠️  Found ${brokenRefs.length} broken reference(s) — running repair pass...`));
-      brokenRefs.forEach((r) => console.log(chalk.dim(`    missing: ${r.missingFile} ← ${r.inFile}`)));
-
-      // Derive task number from actual plan so we don't conflict with existing tasks
-      const existingTasks = await readTasks(planFile);
-      const repairNumber = existingTasks.reduce((max, t) => Math.max(max, t.number), 0) + 1;
-
-      const repairTask: PlanTask = {
-        number: repairNumber,
-        title: "Repair: Create missing referenced files",
-        status: "pending",
-        description:
-          `The following files are referenced by the app but do not exist on disk:\n${list}\n\n` +
-          `Read each referencing file to understand what the missing file should contain, then create it.`,
-        acceptanceCriteria: "All referenced files exist and the app compiles without errors.",
-        exampleCode: "",
-        raw: "",
-      };
-
-      // Append repair task to plan.md so updateTaskStatus can find it
-      const repairBlock = [
-        `### Task ${repairTask.number}: ${repairTask.title}`,
-        `**Status**: pending`,
-        `**Description**: ${repairTask.description}`,
-        `**Acceptance Criteria**: ${repairTask.acceptanceCriteria}`,
-        `**Example Code**:`,
-        "```",
-        "",
-        "```",
-      ].join("\n");
-      await appendTasks(planFile, repairBlock);
-
-      const repairContext = await buildProjectContext(planFile, outputDir, projectContextChars);
-      const repairResult = await runImplementationAgent(
-        model,
-        providerConfig,
-        repairTask,
-        { ...design, images: [] }, // no images needed for a repair pass
-        planFile,
-        outputDir,
-        repairContext,
-        systemPrompt,
-        reasoningEffort,
-        maxTokens,
-        maxToolCallIterations,
-        commandTimeoutSecs,
-        llmTimeoutSecs,
-        historyTrimThreshold,
-        historyTrimKeep,
-        parallelToolCalls,
-        frequencyPenalty,
-        llmStreamTimeoutSecs,
-        maxConsecutiveLoops,
-      );
-
-      totalUsage = addTokenUsage(totalUsage, repairResult.usage);
-      tasksCompleted++;
-      console.log(chalk.green(`  ✅ Repair pass: ${repairResult.summary}`));
     }
   }
 

@@ -129,10 +129,15 @@ Use the available Playwright tools to navigate to the application, explore its f
   // When a loop is detected, strip Playwright tools so the model MUST decide.
   let onlyDecisionTools = false;
 
-  // Blank page detection: set when any tool call returns an invalid [object Object] ref.
-  // Persists across outer loop iterations so we only act on it once.
+  // Invalid-ref tracking. "[object Object]" appears when a model doesn't understand
+  // playwright-mcp's ARIA snapshot ref format (e.g. [ref=e5] → pass "e5").
+  // We give the model REF_FORMAT_GRACE_LIMIT helpful corrections before concluding
+  // the page is truly blank (a model that sees real elements will self-correct;
+  // a model facing a genuinely blank page will keep failing).
+  let invalidRefCount = 0;
+  const REF_FORMAT_GRACE_LIMIT = 3;
+  // Set only after grace limit is exhausted — triggers blank-page handling.
   let invalidRefDetected = false;
-  let invalidRefWarningLogged = false;
 
   // Tool-calling loop
   for (let i = 0; i < maxToolCallIterations; i++) {
@@ -199,10 +204,23 @@ Use the available Playwright tools to navigate to the application, explore its f
           toolCallId: toolCall.id,
         });
       } else {
+        // Once invalid-ref escalation has been triggered for this evaluation,
+        // close out any remaining tool calls in the same batch without executing them.
+        if (invalidRefDetected) {
+          messages.push({
+            role: "tool",
+            content: "Error: page appears blank — please call decide_needs_work.",
+            toolCallId: toolCall.id,
+          });
+          continue;
+        }
+
         // Execute Playwright MCP tool
 
         // ── Loop detection ────────────────────────────────────────────────────
-        // Detect [object Object] refs (invalid — blank page or serialization bug)
+        // Detect [object Object] refs — this means the model doesn't understand
+        // playwright-mcp's ARIA ref format. Give it REF_FORMAT_GRACE_LIMIT
+        // clear corrections before escalating to blank-page mode.
         const isInvalidRef = toolCall.arguments["ref"] === "[object Object]";
 
         // Track call signature in rolling window
@@ -213,23 +231,45 @@ Use the available Playwright tools to navigate to the application, explore its f
         const isLooping = sigRepeatCount >= LOOP_THRESHOLD;
 
         if (isInvalidRef || isLooping) {
-          const reason = isInvalidRef
-            ? `"[object Object]" is not a valid element ref — the page is likely blank or the snapshot returned no elements`
-            : `"${toolCall.name}" has been called with identical arguments ${sigRepeatCount} times — stuck in a loop`;
           if (isInvalidRef) {
-            if (!invalidRefWarningLogged) {
-              console.log(`    ⚠️  Evaluator loop: ${reason}`);
-              invalidRefWarningLogged = true;
+            invalidRefCount++;
+            if (invalidRefCount <= REF_FORMAT_GRACE_LIMIT) {
+              // Within grace period: give model a clear explanation of ref format
+              console.log(`    ⚠️  Evaluator: invalid ref "[object Object]" (attempt ${invalidRefCount}/${REF_FORMAT_GRACE_LIMIT}) — explaining format`);
+              messages.push({
+                role: "tool",
+                content:
+                  `Error: "[object Object]" is not a valid element ref.\n\n` +
+                  `Element refs are short string identifiers shown in the ARIA snapshot as [ref=eN]. ` +
+                  `For example, if the snapshot contains:\n` +
+                  `  - heading "Password Generator" [level=1] [ref=e5]\n` +
+                  `  - button "Generate" [ref=e8]\n` +
+                  `then pass "e5" or "e8" as the ref value — just the identifier after "ref=".\n\n` +
+                  `Call browser_snapshot to see the current page elements and their refs, then retry with a valid ref string.`,
+                toolCallId: toolCall.id,
+              });
+              loopDetectedThisTurn = true;
+              continue;
             }
+            // Grace limit exhausted — escalate to blank-page handling.
+            // Push a response for this tool call, then the guard at the top of the
+            // loop will short-circuit all remaining tool calls in the same batch.
+            console.log(`    ⚠️  Evaluator: ref format still invalid after ${invalidRefCount} attempts — treating as blank page`);
+            invalidRefDetected = true;
+            messages.push({
+              role: "tool",
+              content: "Error: invalid ref. Page appears blank — please call decide_needs_work.",
+              toolCallId: toolCall.id,
+            });
           } else {
+            const reason = `"${toolCall.name}" has been called with identical arguments ${sigRepeatCount} times — stuck in a loop`;
             console.log(`    ⚠️  Evaluator loop: ${reason}`);
+            messages.push({
+              role: "tool",
+              content: `Error: ${reason}. Stop repeating this call. If the page is blank or broken, call decide_needs_work immediately.`,
+              toolCallId: toolCall.id,
+            });
           }
-          messages.push({
-            role: "tool",
-            content: `Error: ${reason}. Stop repeating this call. If the page is blank or broken, call decide_needs_work immediately.`,
-            toolCallId: toolCall.id,
-          });
-          if (isInvalidRef) invalidRefDetected = true;
           loopDetectedThisTurn = true;
           continue;
         }
@@ -263,6 +303,14 @@ Use the available Playwright tools to navigate to the application, explore its f
             content: textParts.join("\n") || "Action completed",
             toolCallId: toolCall.id,
           });
+
+          // 1a. After navigation, wait for JS frameworks (e.g. React 18 concurrent mode)
+          // to finish mounting before the LLM takes a snapshot. React's createRoot().render()
+          // schedules the commit phase asynchronously, so the load event fires before the
+          // DOM is populated. A short wait ensures the accessibility tree has content.
+          if (toolCall.name === "browser_navigate") {
+            await playwright.callTool("browser_wait_for", { time: 1 });
+          }
 
           // 2. Collect images for a final user message
           if (imageParts.length > 0) {

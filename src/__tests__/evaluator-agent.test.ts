@@ -182,7 +182,7 @@ describe("runEvaluatorAgent - outputDir wiring", () => {
 });
 
 describe("runEvaluatorAgent - invalid ref handling", () => {
-  test("gives model correction messages for [object Object] refs within grace limit", async () => {
+  test("allows NEEDS_WORK if model recovers from invalid ref and successfully interacts", async () => {
     let callCount = 0;
 
     mock.module("../llm/create-client.ts", () => ({
@@ -190,21 +190,28 @@ describe("runEvaluatorAgent - invalid ref handling", () => {
         async chat() {
           callCount++;
           if (callCount === 1) {
-            // First call: model returns a tool call with an invalid ref
+            // First call: model tries an invalid ref, then a successful click
             return {
               content: null,
               toolCalls: [
-                {
-                  id: "call_snap",
-                  name: "browser_snapshot",
-                  arguments: { ref: "[object Object]" },
-                },
+                { id: "call_bad", name: "browser_click", arguments: { ref: "[object Object]" } },
               ],
               usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120, llmCallCount: 1 },
               finishReason: "tool_calls",
             };
           }
-          // Second call: model corrects itself and decides NEEDS_WORK
+          if (callCount === 2) {
+            // Second call: model corrects itself and clicks with a valid ref
+            return {
+              content: null,
+              toolCalls: [
+                { id: "call_good", name: "browser_click", arguments: { ref: "e5" } },
+              ],
+              usage: { promptTokens: 120, completionTokens: 20, totalTokens: 140, llmCallCount: 1 },
+              finishReason: "tool_calls",
+            };
+          }
+          // Third call: model decides NEEDS_WORK (has successfulInteractions > 0)
           return {
             content: null,
             toolCalls: [
@@ -247,6 +254,84 @@ describe("runEvaluatorAgent - invalid ref handling", () => {
 
     expect(result.decision).toBe("NEEDS_WORK");
     expect(result.explanation).toBeTruthy();
+  });
+
+  test("throws EvaluatorModelIncompatibleError when model calls NEEDS_WORK after invalid ref with no successful interactions", async () => {
+    let callCount = 0;
+
+    mock.module("../llm/create-client.ts", () => ({
+      createLLMClient: () => ({
+        async chat() {
+          callCount++;
+          if (callCount === 1) {
+            return {
+              content: null,
+              toolCalls: [{ id: "call_bad", name: "browser_click", arguments: { ref: "[object Object]" } }],
+              usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120, llmCallCount: 1 },
+              finishReason: "tool_calls",
+            };
+          }
+          // Model immediately gives up and calls NEEDS_WORK without interacting
+          return {
+            content: null,
+            toolCalls: [
+              {
+                id: "call_nw",
+                name: "decide_needs_work",
+                arguments: { explanation: "I had technical errors", corrections: "Fix the app" },
+              },
+            ],
+            usage: { promptTokens: 200, completionTokens: 50, totalTokens: 250, llmCallCount: 1 },
+            finishReason: "tool_calls",
+          };
+        },
+      }),
+    }));
+
+    const { runEvaluatorAgent, EvaluatorModelIncompatibleError } = await import("../agents/evaluator-agent.ts");
+    const tmpDesignFile = `/tmp/eval-design-earlyquit-${Date.now()}.md`;
+    const tmpPlanFile = `/tmp/eval-plan-earlyquit-${Date.now()}.md`;
+    const tmpMemoryFile = `/tmp/eval-memory-earlyquit-${Date.now()}.md`;
+    trackedFiles.push(tmpDesignFile, tmpPlanFile, tmpMemoryFile);
+    await Bun.write(tmpDesignFile, "# App Design\n\nA simple todo app.");
+
+    await expect(
+      runEvaluatorAgent(
+        "gemma-4-incompatible",
+        { type: "copilot" },
+        "http://localhost:3000",
+        "# App Design\n\nA simple todo app.",
+        tmpPlanFile,
+        tmpDesignFile,
+        tmpMemoryFile,
+        "/tmp/eval-earlyquit-output",
+        "chrome",
+        true,
+        "You are an expert UX evaluator.",
+      )
+    ).rejects.toThrow(EvaluatorModelIncompatibleError);
+
+    // Restore shared mock
+    mock.module("../llm/create-client.ts", () => ({
+      createLLMClient: () => ({
+        async chat() {
+          if (mockDecision === "pass") {
+            return {
+              content: null,
+              toolCalls: [{ id: "call_1", name: "decide_pass", arguments: { explanation: "App matches design perfectly" } }],
+              usage: { promptTokens: 500, completionTokens: 100, totalTokens: 600, llmCallCount: 1 },
+              finishReason: "tool_calls",
+            };
+          }
+          return {
+            content: null,
+            toolCalls: [{ id: "call_1", name: "decide_needs_work", arguments: { explanation: "Header is missing", corrections: "Add a header component with the app name" } }],
+            usage: { promptTokens: 500, completionTokens: 150, totalTokens: 650, llmCallCount: 1 },
+            finishReason: "tool_calls",
+          };
+        },
+      }),
+    }));
   });
 
   test("throws EvaluatorModelIncompatibleError when grace limit is exhausted", async () => {

@@ -147,6 +147,10 @@ Use the available Playwright tools to navigate to the application, explore its f
   // a model facing a genuinely blank page will keep failing).
   let invalidRefCount = 0;
   const REF_FORMAT_GRACE_LIMIT = 3;
+  // Counts successful element interactions (clicks, typing, etc.) — not observations.
+  // Used to detect premature NEEDS_WORK decisions from models that can't use refs.
+  const INTERACTION_TOOLS = new Set(["browser_click", "browser_type", "browser_fill_form", "browser_select_option", "browser_hover", "browser_drag"]);
+  let successfulInteractions = 0;
 
   // Tool-calling loop
   for (let i = 0; i < maxToolCallIterations; i++) {
@@ -203,6 +207,13 @@ Use the available Playwright tools to navigate to the application, explore its f
           toolCallId: toolCall.id,
         });
       } else if (toolCall.name === "decide_needs_work") {
+        // If the model tried invalid refs but never successfully interacted with
+        // the app, its NEEDS_WORK decision is based on its own limitations rather
+        // than actual app defects — treat it as a model compatibility failure.
+        if (invalidRefCount > 0 && successfulInteractions === 0) {
+          await playwright?.stop();
+          throw new EvaluatorModelIncompatibleError(model);
+        }
         decision = "NEEDS_WORK";
         explanation = String(toolCall.arguments["explanation"] ?? "");
         corrections = String(toolCall.arguments["corrections"] ?? "");
@@ -303,6 +314,10 @@ Use the available Playwright tools to navigate to the application, explore its f
             content: textParts.join("\n") || "Action completed",
             toolCallId: toolCall.id,
           });
+
+          if (INTERACTION_TOOLS.has(toolCall.name)) {
+            successfulInteractions++;
+          }
 
           // 1a. After navigation, wait for JS frameworks (e.g. React 18 concurrent mode)
           // to finish mounting before the LLM takes a snapshot. React's createRoot().render()

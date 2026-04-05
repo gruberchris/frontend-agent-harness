@@ -132,6 +132,7 @@ Use the available Playwright tools to navigate to the application, explore its f
   // Blank page detection: set when any tool call returns an invalid [object Object] ref.
   // Persists across outer loop iterations so we only act on it once.
   let invalidRefDetected = false;
+  let invalidRefWarningLogged = false;
 
   // Tool-calling loop
   for (let i = 0; i < maxToolCallIterations; i++) {
@@ -215,7 +216,14 @@ Use the available Playwright tools to navigate to the application, explore its f
           const reason = isInvalidRef
             ? `"[object Object]" is not a valid element ref — the page is likely blank or the snapshot returned no elements`
             : `"${toolCall.name}" has been called with identical arguments ${sigRepeatCount} times — stuck in a loop`;
-          console.log(`    ⚠️  Evaluator loop: ${reason}`);
+          if (isInvalidRef) {
+            if (!invalidRefWarningLogged) {
+              console.log(`    ⚠️  Evaluator loop: ${reason}`);
+              invalidRefWarningLogged = true;
+            }
+          } else {
+            console.log(`    ⚠️  Evaluator loop: ${reason}`);
+          }
           messages.push({
             role: "tool",
             content: `Error: ${reason}. Stop repeating this call. If the page is blank or broken, call decide_needs_work immediately.`,

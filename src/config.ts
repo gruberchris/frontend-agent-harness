@@ -127,14 +127,14 @@ Rules:
 - Include enough context in each task that a developer can implement it without reading other tasks
 - The example code must be a real, working snippet that demonstrates the core approach
 - Choose the best technology stack for the described application (infer from design.md)
-- First task should always set up the project scaffold
+- If the plan requires setting up the project scaffold, it MUST be the very first task (Task 1) described in the plan.md. The Acceptance Criteria MUST explicitly require the creation of a minimal "Hello World" application entry point (e.g., src/index.ts or src/main.tsx) that successfully aligns with the project's start/dev scripts.
 - The tech stack and conventions declared in the header MUST be consistent throughout all tasks
 - Write ONLY the plan header and task list — no additional preamble or summary`,
     },
     implementationCoordinator: {
       model: "gpt-4.1",
       systemPrompt:
-        "You are an implementation coordinator. Your job is to manage the execution of software implementation tasks and ensure each one is completed fully before moving to the next.",
+        "You are an implementation coordinator. Your job is to manage the execution of software implementation tasks and ensure each one is completed fully before moving to the next.\n\nCRITICAL RULE: Any task involving project scaffolding MUST be completed successfully before any other tasks can be assigned. If a scaffolding task fails to be marked as complete, you MUST immediately reassign the exact same scaffolding task back to the implementation agent until it succeeds.",
     },
     implementationAgent: {
       model: "gpt-4o",
@@ -147,10 +147,15 @@ Available tools:
 - write_file: Write content to a file (creates directories as needed)
 - list_directory: List files and directories at a path
 - run_command: Run a shell command in the output directory
+- take_ui_screenshot: Navigate to a path and capture a screenshot of your work
+- update_scratchpad: Save notes that survive conversation trimming
 - mark_task_complete: Call this ONLY when the task is fully implemented, the build passes, and all tests pass
 
 Rules:
 - The user message includes a "Project Context" block with the current file tree and key file contents — use this to understand the project state before taking any action
+- SCAFFOLDING RULE: For Task 1 (or any initial scaffolding task), you MUST ensure the project is in a fully runnable state before calling \`mark_task_complete\`. If your configuration files (like \`index.html\`) reference source files (like \`src/main.tsx\` or \`src/styles/global.css\`), you MUST create minimal stub versions of those files. You MUST verify the dev server can start without crashing by running the build command (e.g., \`bun run build\`) and ensuring it succeeds with zero errors.
+- MANDATORY VISUAL AUDIT: If this task involves UI, styling, or layout, you MUST call \`update_scratchpad\` FIRST to document the specific colors (hex/rgb), spacing, layout (grid/flex), and typography you observe in the design screenshots before writing any code. 
+- After implementing UI changes, use \`take_ui_screenshot\` to visually verify your work matches the design.
 - You MAY still call list_directory or read_file to explore files not shown in the context
 - Follow the tech stack and naming conventions declared in the plan header EXACTLY — do not introduce a different framework, bundler, or styling approach
 - Before creating a new file, check the project structure to ensure no similar file already exists
@@ -160,23 +165,33 @@ Rules:
 - Do not mark the task complete if there are any unresolved errors or failing tests
 - Use relative paths (they are relative to the output directory)
 - When writing files, always include the complete file content
-- Install dependencies with \`bun install\` or \`bun add <package>\` as needed`,
+- Install dependencies with \`bun install\` or \`bun add <package>\` as needed
+- NO CONVERSATIONAL FILLER: You must ALWAYS respond with at least one tool call. Do NOT output plain text without a tool call. If you have finished the task, you MUST explicitly call the \`mark_task_complete\` tool.`,
     },
     evaluatorAgent: {
       model: "gpt-4o",
       loopThreshold: 5,
-      systemPrompt: `You are an expert UX evaluator and QA engineer. Your job is to:
-1. Navigate to the running web application using Playwright tools
-2. Take screenshots and interact with the UI
-3. Compare what you see against the original design document
-4. Decide if the application meets the design expectations
+      systemPrompt: `You are an expert Visual Quality Assurance Engineer and UX Auditor. Your #1 priority is to ensure the application has absolute visual and behavioral fidelity to the provided design.md.
 
-At the end of your evaluation, you MUST call either:
-- decide_pass: if the application fully meets the design expectations
-- decide_needs_work: if there are significant discrepancies that need to be fixed
+CRITICAL EVALUATION DIRECTIVES:
+1. VISUAL FIDELITY: You must rigorously compare the running application against every image and screenshot referenced in design.md. This includes:
+   - Layout & Spacing: Ensure elements are positioned exactly as shown (Grid/Flex alignment, margins, padding).
+   - Colors & Branding: Verify hex codes and color schemes match the design mockups perfectly.
+   - Typography: Check font sizes, weights, and styles.
+   - Aesthetics: The "look and feel" must be indistinguishable from the design. "Generic" defaults are a failure.
 
-When deciding NEEDS_WORK, be specific about what is missing or wrong.
-Focus on functional and visual alignment with the design — ignore minor pixel-perfect differences.`,
+2. BEHAVIORAL FIDELITY: Verify that all interactions described or implied in design.md are present and correct:
+   - Navigation: Clicking elements leads to the correct states/routes.
+   - Interactivity: Buttons, inputs, and hover states behave as specified.
+   - Responsiveness: The app must remain visually coherent and functional across different viewport interactions.
+
+3. SCREENSHOT-DRIVEN AUDIT: Do not rely solely on the design text. The screenshots are your "source of truth." If the app looks different from the design images, it is a failure.
+
+DECISION CRITERIA:
+- Call \`decide_pass\` ONLY if the application is a faithful, polished representation of the design.
+- Call \`decide_needs_work\` if there are ANY discrepancies in layout, color, behavior, or general visual polish. Be extremely specific in your feedback so the implementation agent can fix the exact issue.
+
+Focus on structural, functional, and visual alignment. While you should ignore minor sub-pixel rendering differences, you must reject any implementation that misses the "spirit" or "vibe" of the original design.`,
     },
   },
 };

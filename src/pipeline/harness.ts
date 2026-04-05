@@ -142,7 +142,65 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
 
   for (let iteration = 1; iteration <= config.maxEvaluatorIterations; iteration++) {
     totalIterations = iteration;
+    let devServerError: string | undefined;
+    
+    // ── Start/restart dev server before implementation ──────────────────────
+    if (devServerHandle) {
+      activeHandles.delete(devServerHandle);
+      await devServerHandle.stop();
+      devServerHandle = null;
+    }
+
+    const pkgJsonPath = path.join(config.appDir, "package.json");
+    const pkgJsonExists = await Bun.file(pkgJsonPath).exists();
+    let hasDevScript = false;
+    if (pkgJsonExists) {
+      const pkg = await Bun.file(pkgJsonPath).json();
+      hasDevScript = !!pkg.scripts?.dev;
+    }
+
+    if (hasDevScript) {
+      console.log(chalk.bold(`\n🖥️  Starting dev server at ${appUrl}...`));
+      try {
+        devServerHandle = await startDevServer(
+          config.appDir,
+          config.devServer.startCommand,
+          config.devServer.port,
+        );
+        activeHandles.add(devServerHandle);
+        console.log(chalk.green(`✅ Dev server running at ${appUrl}`));
+      } catch (err) {
+        devServerError = String(err);
+        console.warn(chalk.yellow(`⚠️  Could not start dev server: ${devServerError}`));
+      }
+    } else {
+      console.log(chalk.gray(`\nℹ️  Dev server not started yet (package.json or 'dev' script missing).`));
+    }
+
     console.log(chalk.bold(`\n🏗️  Step 2 (iteration ${iteration}): Implementation...`));
+
+    const ensureDevServer = async () => {
+      if (devServerHandle) return;
+      
+      const pkgExists = await Bun.file(path.join(config.appDir, "package.json")).exists();
+      if (!pkgExists) return;
+
+      console.log(chalk.bold(`\n🖥️  Attempting to start dev server at ${appUrl}...`));
+      try {
+        devServerHandle = await startDevServer(
+          config.appDir,
+          config.devServer.startCommand,
+          config.devServer.port,
+        );
+        activeHandles.add(devServerHandle);
+        console.log(chalk.green(`✅ Dev server running at ${appUrl}`));
+        devServerError = undefined; // Clear previous error if successful
+      } catch (err) {
+        devServerError = String(err);
+        console.warn(chalk.yellow(`⚠️  Could not start dev server: ${devServerError}`));
+        throw err;
+      }
+    };
 
     // ── Step 2: Implementation Coordinator ──────────────────────────────────
     const coordResult = await runImplementationCoordinator(
@@ -151,6 +209,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
       design, // re-use loaded design (images already in memory)
       config.planFile,
       config.appDir,
+      appUrl, // pass appUrl down for the new take_ui_screenshot tool
       config.agents.implementationAgent.systemPrompt,
       config.agents.implementationAgent.reasoningEffort,
       config.agents.implementationAgent.maxTokens,
@@ -165,6 +224,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
       config.maxTaskRetries,
       config.llmStreamTimeoutSecs,
       config.maxConsecutiveLoops,
+      ensureDevServer,
     );
     implCoordUsage = addTokenUsage(implCoordUsage, coordResult.usage);
     implCoordCalls += coordResult.tasksCompleted;
@@ -186,26 +246,6 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
     console.log(
       chalk.green(`✅ Implementation complete (${coordResult.tasksCompleted} tasks done)`),
     );
-
-    // ── Start/restart dev server ────────────────────────────────────────────
-    if (devServerHandle) {
-      activeHandles.delete(devServerHandle);
-      await devServerHandle.stop();
-    }
-    console.log(chalk.bold(`\n🖥️  Starting dev server at ${appUrl}...`));
-    let devServerError: string | undefined;
-    try {
-      devServerHandle = await startDevServer(
-        config.appDir,
-        config.devServer.startCommand,
-        config.devServer.port,
-      );
-      activeHandles.add(devServerHandle);
-      console.log(chalk.green(`✅ Dev server running at ${appUrl}`));
-    } catch (err) {
-      devServerError = String(err);
-      console.warn(chalk.yellow(`⚠️  Could not start dev server: ${devServerError}`));
-    }
 
     // ── Step 3: Evaluator Agent ──────────────────────────────────────────────
     console.log(chalk.bold(`\n🧪 Step 3 (iteration ${iteration}): Evaluator Agent...`));

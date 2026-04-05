@@ -111,7 +111,7 @@ describe("runImplementationCoordinator", () => {
     await Bun.write(tmpPlanFile, MULTI_TASK_PLAN);
 
     const { runImplementationCoordinator } = await import("../agents/implementation-coordinator.ts");
-    await runImplementationCoordinator("gpt-4o", { type: "copilot" }, { text: "# Design", images: [] }, tmpPlanFile, tmpMemoryFile, tmpOutputDir, "You are a coordinator.");
+    await runImplementationCoordinator("gpt-4o", { type: "copilot" }, { text: "# Design", images: [] }, tmpPlanFile, tmpOutputDir, "http://localhost:3000", "You are a coordinator.");
 
     expect(capturedContextArg).toBeDefined();
     expect(capturedContextArg!).toContain("Project Context");
@@ -177,8 +177,8 @@ describe("design image stripping", () => {
     return `## Tech Stack\n- **Framework**: React\n\n---\n\n### Task 1: ${task1Title}\n**Status**: pending\n**Description**: Do it\n**Acceptance Criteria**: Done\n**Example Code**:\n\`\`\`\n\`\`\`\n\n---\n\n### Task 2: ${task2Title}\n**Status**: pending\n**Description**: Do it\n**Acceptance Criteria**: Done\n**Example Code**:\n\`\`\`\n\`\`\`\n`;
   }
 
-  test("images are sent for task 1 but stripped for subsequent non-UI tasks", async () => {
-    const contentTypes: ("array" | "string")[] = [];
+  test("images are sent for task 1 but secondary images are stripped for subsequent non-UI tasks", async () => {
+    const imageCounts: number[] = [];
     let seq = 0;
 
     mock.module("../llm/create-client.ts", () => ({
@@ -188,7 +188,11 @@ describe("design image stripping", () => {
           if (seq % 2 === 1) {
             const msgs = messages as Array<{ role: string; content: unknown }>;
             const userMsg = msgs.find((m) => m.role === "user");
-            contentTypes.push(Array.isArray(userMsg?.content) ? "array" : "string");
+            let imgCount = 0;
+            if (Array.isArray(userMsg?.content)) {
+               imgCount = userMsg.content.filter((part: any) => part.type === "image").length;
+            }
+            imageCounts.push(imgCount);
           }
           if (seq % 2 === 1) {
             return { content: null, toolCalls: [{ id: "w1", name: "write_file", arguments: { path: "f.html", content: "<h1>x</h1>" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, llmCallCount: 1 }, finishReason: "tool_calls" as const };
@@ -205,14 +209,14 @@ describe("design image stripping", () => {
     await Bun.write(tmpPlan, makePlan("Project Scaffold", "Add routing"));
 
     const { runImplementationCoordinator } = await import("../agents/implementation-coordinator.ts");
-    await runImplementationCoordinator("gpt-4o", { type: "copilot" }, { text: "# Design", images: [fakeImage] }, tmpPlan, tmpMemory, tmpOutput, "sys");
+    await runImplementationCoordinator("gpt-4o", { type: "copilot" }, { text: "# Design", images: [fakeImage, fakeImage] }, tmpPlan, tmpOutput, "http://localhost:3000", "sys");
 
-    expect(contentTypes[0]).toBe("array");  // task 1: images included
-    expect(contentTypes[1]).toBe("string"); // task 2: images stripped
+    expect(imageCounts[0]).toBe(2);  // task 1: all images included
+    expect(imageCounts[1]).toBe(1); // task 2: secondary images stripped, primary kept
   });
 
-  test("images are preserved for UI-related tasks beyond task 1", async () => {
-    const contentTypes: ("array" | "string")[] = [];
+  test("images are fully preserved for UI-related tasks beyond task 1", async () => {
+    const imageCounts: number[] = [];
     let seq = 0;
 
     mock.module("../llm/create-client.ts", () => ({
@@ -222,7 +226,11 @@ describe("design image stripping", () => {
           if (seq % 2 === 1) {
             const msgs = messages as Array<{ role: string; content: unknown }>;
             const userMsg = msgs.find((m) => m.role === "user");
-            contentTypes.push(Array.isArray(userMsg?.content) ? "array" : "string");
+            let imgCount = 0;
+            if (Array.isArray(userMsg?.content)) {
+               imgCount = userMsg.content.filter((part: any) => part.type === "image").length;
+            }
+            imageCounts.push(imgCount);
           }
           if (seq % 2 === 1) {
             return { content: null, toolCalls: [{ id: "w1", name: "write_file", arguments: { path: "g.html", content: "<h1>y</h1>" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, llmCallCount: 1 }, finishReason: "tool_calls" as const };
@@ -240,10 +248,10 @@ describe("design image stripping", () => {
     await Bun.write(tmpPlan, makePlan("Project Scaffold", "Style the UI components"));
 
     const { runImplementationCoordinator } = await import("../agents/implementation-coordinator.ts");
-    await runImplementationCoordinator("gpt-4o", { type: "copilot" }, { text: "# Design", images: [fakeImage] }, tmpPlan, tmpMemory, tmpOutput, "sys");
+    await runImplementationCoordinator("gpt-4o", { type: "copilot" }, { text: "# Design", images: [fakeImage, fakeImage] }, tmpPlan, tmpOutput, "http://localhost:3000", "sys");
 
-    expect(contentTypes[0]).toBe("array"); // task 1: images included
-    expect(contentTypes[1]).toBe("array"); // task 2: "Style" → UI task, images kept
+    expect(imageCounts[0]).toBe(2); // task 1: all images included
+    expect(imageCounts[1]).toBe(2); // task 2: "Style" → UI task, all images kept
   });
 });
 
@@ -282,6 +290,7 @@ describe("task retry on permanent failure", () => {
       { text: "# Design", images: [] },
       tmpPlan,
       tmpOutput,
+      "http://localhost:3000",
       "sys",
       undefined, // reasoningEffort
       undefined, // maxTokens

@@ -176,6 +176,7 @@ export async function runImplementationCoordinator(
   design: DesignContent,
   planFile: string,
   outputDir: string,
+  appUrl: string,
   systemPrompt: string,
   reasoningEffort?: string,
   maxTokens?: number,
@@ -190,6 +191,7 @@ export async function runImplementationCoordinator(
   maxTaskRetries = 2,
   llmStreamTimeoutSecs?: number,
   maxConsecutiveLoops?: number,
+  onTaskComplete?: () => Promise<void>,
 ): Promise<CoordinatorResult> {
   let totalUsage = emptyTokenUsage();
   let tasksCompleted = 0;
@@ -197,6 +199,9 @@ export async function runImplementationCoordinator(
 
   // Tracks how many times each task (by number) has been attempted.
   const retryCount = new Map<number, number>();
+  
+  // Tracks the failure reason of the previous attempt for a task, so the agent can fix it.
+  const previousErrors = new Map<number, string>();
 
   while (true) {
     const nextTask = await getNextPendingTask(planFile);
@@ -221,10 +226,11 @@ export async function runImplementationCoordinator(
 
     // Send design images only for the first task or visually focused tasks.
     // Resending large base64 images on every task wastes significant tokens.
+    // However, always preserve the primary (first) image to maintain visual context.
     const isUiTask = /layout|style|css|ui|visual|design|component|theme|color|icon/i.test(nextTask.title);
     const taskDesign: DesignContent = (tasksCompleted === 0 || isUiTask)
       ? design
-      : { ...design, images: [] };
+      : { ...design, images: design.images.length > 0 ? [design.images[0]!] : [] };
 
     const result = await runImplementationAgent(
       model,
@@ -233,8 +239,10 @@ export async function runImplementationCoordinator(
       taskDesign,
       planFile,
       outputDir,
+      appUrl,
       projectContext,
       systemPrompt,
+      previousErrors.get(nextTask.number),
       reasoningEffort,
       maxTokens,
       maxToolCallIterations,
@@ -250,10 +258,25 @@ export async function runImplementationCoordinator(
 
     totalUsage = addTokenUsage(totalUsage, result.usage);
 
-    const failed = result.summary.startsWith("Implementation failed");
+    let failed = result.summary.startsWith("Implementation failed");
+    let summary = result.summary;
+
+    if (!failed && onTaskComplete) {
+      try {
+        await onTaskComplete();
+      } catch (err) {
+        failed = true;
+        summary = `Implementation failed: Dev server verification failed: ${String(err)}`;
+        // Task was marked "completed" by mark_task_complete tool — reset to "failed"
+        // so getNextPendingTask picks it up again for an immediate retry.
+        await updateTaskStatus(planFile, nextTask.number, "failed");
+      }
+    }
+
     if (failed) {
       const newAttempts = attempts + 1;
       retryCount.set(nextTask.number, newAttempts);
+      previousErrors.set(nextTask.number, summary);
 
       if (newAttempts >= maxTaskRetries) {
         // Task has exhausted all retry attempts — leave it as "failed" in plan.md
@@ -261,7 +284,7 @@ export async function runImplementationCoordinator(
         // tasks run, so this is the only task that will ever be permanently "failed".
         console.log(
           chalk.red(
-            `  ❌ Task ${nextTask.number} permanently failed after ${newAttempts} attempt(s): ${result.summary}`,
+            `  ❌ Task ${nextTask.number} permanently failed after ${newAttempts} attempt(s): ${summary}`,
           ),
         );
         permanentlyFailedTask = { number: nextTask.number, title: nextTask.title };
@@ -270,14 +293,15 @@ export async function runImplementationCoordinator(
 
       console.log(
         chalk.yellow(
-          `  ⚠️  Task ${nextTask.number} incomplete (attempt ${newAttempts}/${maxTaskRetries}): ${result.summary}`,
+          `  ⚠️  Task ${nextTask.number} incomplete (attempt ${newAttempts}/${maxTaskRetries}): ${summary}`,
         ),
       );
       // Task is now "failed" in plan.md; getNextPendingTask will return it again
       // on the next loop iteration for an immediate retry.
     } else {
       tasksCompleted++;
-      console.log(chalk.green(`  ✅ Task ${nextTask.number} completed: ${result.summary}`));
+      previousErrors.delete(nextTask.number); // clear error on success
+      console.log(chalk.green(`  ✅ Task ${nextTask.number} completed: ${summary}`));
     }
   }
 

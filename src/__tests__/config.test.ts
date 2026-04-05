@@ -71,9 +71,9 @@ describe("loadConfig", () => {
     expect(config.agents.taskAgent.systemPrompt).toBeDefined();
     expect(config.agents.taskAgent.systemPrompt).toContain("architect");
     expect(config.agents.implementationAgent.systemPrompt).toBeDefined();
-    expect(config.agents.implementationAgent.systemPrompt).toContain("implementation agent");
+    expect(config.agents.implementationAgent.systemPrompt).toContain("implementation");
     expect(config.agents.evaluatorAgent.systemPrompt).toBeDefined();
-    expect(config.agents.evaluatorAgent.systemPrompt).toContain("evaluator");
+    expect(config.agents.evaluatorAgent.systemPrompt).toContain("Audit");
   });
 
   test("merges custom systemPrompt from config file", async () => {

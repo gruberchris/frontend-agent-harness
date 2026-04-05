@@ -1,6 +1,6 @@
 import { createLLMClient } from "../llm/create-client.ts";
 import type { ProviderConfig } from "../llm/provider.ts";
-import { addTokenUsage, emptyTokenUsage, type TokenUsage } from "../llm/types.ts";
+import { addTokenUsage, emptyTokenUsage, type TokenUsage, type MessageContentPart } from "../llm/types.ts";
 import type { LLMMessage, ToolDefinition } from "../llm/types.ts";
 import { updateTaskStatus } from "../plan/plan-parser.ts";
 import type { PlanTask } from "../plan/types.ts";
@@ -122,7 +122,7 @@ const IMPL_TOOLS: ToolDefinition[] = [
     description:
       "Run a shell command in the output directory. " +
       "Only build, typecheck, test, and install commands are allowed. " +
-      "Do NOT use & to background processes — the harness starts the dev server automatically after all tasks complete. " +
+      "Do NOT use & to background processes — the harness starts the dev server automatically when a task completes. " +
       "Do NOT start any server, watcher, or long-running daemon.",
     parameters: {
       type: "object",
@@ -141,6 +141,17 @@ const IMPL_TOOLS: ToolDefinition[] = [
         notes: { type: "string", description: "The content to save to the scratchpad. Overwrites the previous content." },
       },
       required: ["notes"],
+    },
+  },
+  {
+    name: "take_ui_screenshot",
+    description: "Navigate to a specific path in the running application and capture a screenshot. Use this to visually verify your work against the design.md screenshots.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "The path to navigate to (e.g., '/', '/about'). Defaults to '/'." },
+      },
+      required: [],
     },
   },
   {
@@ -171,8 +182,10 @@ export async function runImplementationAgent(
   design: DesignContent,
   planFile: string,
   outputDir: string,
+  appUrl: string,
   projectContext: string | undefined,
   systemPrompt: string,
+  previousError?: string,
   reasoningEffort?: string,
   maxTokens?: number,
   maxToolCallIterations = 50,
@@ -206,6 +219,10 @@ export async function runImplementationAgent(
     ? design.text.slice(0, DESIGN_TEXT_CAP) + `\n\n...(design text truncated at ${DESIGN_TEXT_CAP} chars — full spec captured in plan header above)`
     : design.text;
 
+  const previousErrorSection = previousError
+    ? `⚠️ **PREVIOUS ATTEMPT FAILED**: The last time you marked this task complete, the following error occurred:\n\n${previousError}\n\nYou must fix this underlying issue before marking the task complete again.\n\n---\n\n`
+    : "";
+
   let scratchpadContent = "";
   
   const buildContextMessage = () => {
@@ -213,7 +230,7 @@ export async function runImplementationAgent(
       ? `## Agent Scratchpad (Persistent Memory)\n${scratchpadContent}\n\n---\n\n`
       : "";
     return buildMessageContent(
-      `${contextSection}${scratchpadSection}Implement the following task:\n\n### Task ${task.number}: ${task.title}\n**Description**: ${task.description}\n**Acceptance Criteria**: ${task.acceptanceCriteria}\n**Example Code**:\n${task.exampleCode}\n\n---\n\nDesign context:\n${designContext}\n\nBegin implementation now. The project context above shows the current state — ensure your changes are consistent with existing files and the declared tech stack.`,
+      `${previousErrorSection}${contextSection}${scratchpadSection}Implement the following task:\n\n### Task ${task.number}: ${task.title}\n**Description**: ${task.description}\n**Acceptance Criteria**: ${task.acceptanceCriteria}\n**Example Code**:\n${task.exampleCode}\n\n---\n\nDesign context:\n${designContext}\n\nBegin implementation now. The project context above shows the current state — ensure your changes are consistent with existing files and the declared tech stack.`,
       design.images,
     );
   };
@@ -333,10 +350,18 @@ export async function runImplementationAgent(
     }
 
     // Strategy 1: Per-call count — only count unique calls so that a 175-call batch counts as 1.
-    for (const { sig } of uniqueCalls) {
-      callCounts.set(sig, (callCounts.get(sig) ?? 0) + 1);
+    // Exempt tools that legitimately need to be called multiple times with the same args 
+    // as external state changes (e.g., tests) or during exploration.
+    const EXEMPT_TOOLS = new Set(["run_command", "take_ui_screenshot", "read_file", "list_directory", "glob", "update_scratchpad"]);
+    
+    for (const { tc, sig } of uniqueCalls) {
+      if (!EXEMPT_TOOLS.has(tc.name)) {
+        callCounts.set(sig, (callCounts.get(sig) ?? 0) + 1);
+      }
     }
-    const overusedCall = uniqueCalls.find(({ sig }) => (callCounts.get(sig) ?? 0) > MAX_INDIVIDUAL_REPEATS);
+    const overusedCall = uniqueCalls.find(({ tc, sig }) => 
+      !EXEMPT_TOOLS.has(tc.name) && (callCounts.get(sig) ?? 0) > MAX_INDIVIDUAL_REPEATS
+    );
 
     // Strategy 2: Sliding-window batch over unique-call signatures — catches A→B→A→B patterns.
     const currentSignature = JSON.stringify(uniqueCalls.map(({ sig }) => sig));
@@ -457,7 +482,7 @@ export async function runImplementationAgent(
             summary: (tc.arguments["summary"] as string) ?? "Task completed",
           };
           // Execute the underlying status update
-          await executeTool(tc.name, tc.arguments, absOutputDir, planFile, task.number, commandTimeoutSecs);
+          await executeTool(tc.name, tc.arguments, absOutputDir, planFile, task.number, appUrl, commandTimeoutSecs);
           messages.push({
             role: "tool",
             content: "Task marked as completed.",
@@ -468,17 +493,19 @@ export async function runImplementationAgent(
           const cached = batchResultCache.get(sig) ?? "(same result as first call)";
           messages.push({ role: "tool", content: cached, toolCallId: tc.id });
         } else {
-          const result = await executeTool(tc.name, tc.arguments, absOutputDir, planFile, task.number, commandTimeoutSecs);
-          batchResultCache.set(sig, result);
-          if ((tc.name === "write_file" || tc.name === "replace_text") && !result.startsWith("Error")) {
+          const result = await executeTool(tc.name, tc.arguments, absOutputDir, planFile, task.number, appUrl, commandTimeoutSecs);
+          batchResultCache.set(sig, typeof result === "string" ? result : "(image)");
+          if ((tc.name === "write_file" || tc.name === "replace_text") && typeof result === "string" && !result.startsWith("Error")) {
             filesWritten++;
             console.log(`    💾 updated ${tc.arguments["path"]}`);
           } else if (tc.name === "run_command") {
             console.log(`    $ ${tc.arguments["command"]}`);
+          } else if (tc.name === "take_ui_screenshot") {
+            console.log(`    📸 UI Screenshot captured`);
           } else {
             console.log(`    🔩 ${tc.name}(${JSON.stringify(tc.arguments).slice(0, 80)})`);
           }
-          if (result.startsWith("Error")) {
+          if (typeof result === "string" && result.startsWith("Error")) {
             console.log(`    ❌ ${result.slice(0, 200)}`);
           }
           messages.push({
@@ -526,8 +553,9 @@ async function executeTool(
   absOutputDir: string,
   planFile: string,
   taskNumber: number,
+  appUrl: string,
   commandTimeoutSecs = 120,
-): Promise<string> {
+): Promise<string | MessageContentPart[]> {
   try {
     switch (name) {
       case "read_file": {
@@ -647,6 +675,54 @@ async function executeTool(
         }
       }
 
+      case "take_ui_screenshot": {
+        const route = String(args["path"] ?? "/");
+        const targetUrl = new URL(route, appUrl).href;
+        
+        // Write a temporary script to capture the screenshot using playwright
+        const script = `
+          import { chromium } from "playwright";
+          (async () => {
+            const browser = await chromium.launch({ headless: true });
+            const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+            try {
+              await page.goto("${targetUrl}", { waitUntil: "networkidle", timeout: 15000 });
+              // Wait an extra second for frameworks like React to finish rendering
+              await page.waitForTimeout(1000);
+              const buffer = await page.screenshot({ type: "jpeg", quality: 80 });
+              console.log(buffer.toString("base64"));
+            } catch (err) {
+              console.error(err);
+              process.exit(1);
+            } finally {
+              await browser.close();
+            }
+          })();
+        `;
+        
+        const scriptPath = path.join(absOutputDir, ".screenshot.ts");
+        await Bun.write(scriptPath, script);
+        
+        const proc = Bun.spawn(["bun", scriptPath], { stdout: "pipe", stderr: "pipe" });
+        const [stdout, stderr, exitCode] = await Promise.all([
+          new Response(proc.stdout).text(),
+          new Response(proc.stderr).text(),
+          proc.exited,
+        ]);
+        
+        await fs.unlink(scriptPath).catch(() => {});
+        
+        if (exitCode !== 0) {
+          return `Error capturing screenshot of ${targetUrl}: ${stderr}`;
+        }
+        
+        const base64 = stdout.trim();
+        return [
+          { type: "text", text: `Screenshot captured of ${targetUrl}:` },
+          { type: "image", data: base64, mimeType: "image/jpeg" }
+        ];
+      }
+
       case "list_directory": {
         const dirPath = resolveAgentPath(String(args["path"] ?? "."), absOutputDir);
         try {
@@ -669,13 +745,13 @@ async function executeTool(
           return (
             `Error: The command contains a shell background operator (&) which orphans processes. ` +
             `Run commands sequentially without &. ` +
-            `The harness starts the dev server automatically after all tasks complete.`
+            `The harness starts the dev server automatically when a task completes.`
           );
         }
 
         // Reject long-running server/watch processes — they never exit and will
-        // always time out. The harness starts the dev server itself after all
-        // tasks are complete. Implementation tasks should only run build,
+        // always time out. The harness starts the dev server itself when a
+        // task completes. Implementation tasks should only run build,
         // typecheck, test, and install commands.
         const BLOCKED_PATTERNS: Array<[RegExp, string]> = [
           // JS/TS dev scripts (Bun, npm, yarn, pnpm)
@@ -732,7 +808,7 @@ async function executeTool(
         if (blocked) {
           return (
             `Error: "${command}" starts a long-running ${blocked[1]} and is not allowed in implementation tasks. ` +
-            `The harness starts the dev server automatically after all tasks complete. ` +
+            `The harness starts the dev server automatically when a task completes. ` +
             `Use build/typecheck/test/install commands instead.`
           );
         }
@@ -791,4 +867,4 @@ async function executeTool(
   } catch (err) {
     return `Error executing ${name}: ${String(err)}`;
   }
-}
+  }

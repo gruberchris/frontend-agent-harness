@@ -71,6 +71,7 @@ mock.module("../agents/evaluator-agent.ts", () => ({
       usage: { promptTokens: 200, completionTokens: 100, totalTokens: 300, llmCallCount: 5 },
     };
   }),
+  EvaluatorModelIncompatibleError: class extends Error {},
 }));
 
 mock.module("../server/dev-server.ts", () => ({

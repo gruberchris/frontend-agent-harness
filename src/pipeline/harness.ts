@@ -1,6 +1,6 @@
 import { runTaskAgent } from "../agents/task-agent.ts";
 import { runImplementationCoordinator } from "../agents/implementation-coordinator.ts";
-import { runEvaluatorAgent } from "../agents/evaluator-agent.ts";
+import { runEvaluatorAgent, EvaluatorModelIncompatibleError } from "../agents/evaluator-agent.ts";
 import { startDevServer } from "../server/dev-server.ts";
 import { printReport, type AgentStepStats, type PipelineReport } from "./reporting.ts";
 import { addTokenUsage, emptyTokenUsage } from "../llm/types.ts";
@@ -211,25 +211,37 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
     console.log(chalk.bold(`\n🧪 Step 3 (iteration ${iteration}): Evaluator Agent...`));
     const currentDesign = await Bun.file(config.designFile).text();
 
-    const evalResult = await runEvaluatorAgent(
-      config.agents.evaluatorAgent.model,
-      config.provider,
-      appUrl,
-      currentDesign,
-      config.planFile,
-      config.designFile,
-      config.memoryFile,
-      config.outputDir,
-      config.playwright.browser,
-      config.playwright.headless,
-      config.agents.evaluatorAgent.systemPrompt,
-      config.agents.evaluatorAgent.reasoningEffort,
-      config.agents.evaluatorAgent.maxTokens,
-      devServerError,
-      config.llmTimeoutSecs,
-      config.maxToolCallIterations,
-      config.llmStreamTimeoutSecs,
-    );
+    let evalResult;
+    try {
+      evalResult = await runEvaluatorAgent(
+        config.agents.evaluatorAgent.model,
+        config.provider,
+        appUrl,
+        currentDesign,
+        config.planFile,
+        config.designFile,
+        config.memoryFile,
+        config.outputDir,
+        config.playwright.browser,
+        config.playwright.headless,
+        config.agents.evaluatorAgent.systemPrompt,
+        config.agents.evaluatorAgent.reasoningEffort,
+        config.agents.evaluatorAgent.maxTokens,
+        devServerError,
+        config.llmTimeoutSecs,
+        config.maxToolCallIterations,
+        config.llmStreamTimeoutSecs,
+      );
+    } catch (err) {
+      if (err instanceof EvaluatorModelIncompatibleError) {
+        console.log();
+        console.error(chalk.red(`❌ ${err.message}`));
+        result = "FAILURE";
+        resultReason = err.message;
+        break;
+      }
+      throw err;
+    }
     evaluatorUsage = addTokenUsage(evaluatorUsage, evalResult.usage);
     evaluatorCalls += 1;
 

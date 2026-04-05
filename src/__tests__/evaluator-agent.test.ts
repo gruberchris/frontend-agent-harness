@@ -181,8 +181,8 @@ describe("runEvaluatorAgent - outputDir wiring", () => {
   });
 });
 
-describe("runEvaluatorAgent - blank page detection", () => {
-  test("forces NEEDS_WORK via LLM when all snapshot refs are [object Object]", async () => {
+describe("runEvaluatorAgent - invalid ref handling", () => {
+  test("gives model correction messages for [object Object] refs within grace limit", async () => {
     let callCount = 0;
 
     mock.module("../llm/create-client.ts", () => ({
@@ -190,7 +190,7 @@ describe("runEvaluatorAgent - blank page detection", () => {
         async chat() {
           callCount++;
           if (callCount === 1) {
-            // First call: model returns a Playwright tool call with an invalid ref
+            // First call: model returns a tool call with an invalid ref
             return {
               content: null,
               toolCalls: [
@@ -204,7 +204,7 @@ describe("runEvaluatorAgent - blank page detection", () => {
               finishReason: "tool_calls",
             };
           }
-          // Second call (inline blank-page LLM call): model decides NEEDS_WORK
+          // Second call: model corrects itself and decides NEEDS_WORK
           return {
             content: null,
             toolCalls: [
@@ -212,8 +212,8 @@ describe("runEvaluatorAgent - blank page detection", () => {
                 id: "call_nw",
                 name: "decide_needs_work",
                 arguments: {
-                  explanation: "The page at http://localhost:3000 rendered completely blank — no DOM elements were found",
-                  corrections: "Ensure React mounts to #root and the build output is valid",
+                  explanation: "Some features are missing from the implementation",
+                  corrections: "Ensure the submit button is present",
                 },
               },
             ],
@@ -247,12 +247,73 @@ describe("runEvaluatorAgent - blank page detection", () => {
 
     expect(result.decision).toBe("NEEDS_WORK");
     expect(result.explanation).toBeTruthy();
-    expect(result.explanation).toContain("blank");
+  });
 
-    // Memory file should contain the corrections
-    const memory = await Bun.file(tmpMemoryFile).text();
-    expect(memory).toContain("Evaluator Findings");
-    expect(memory).toContain("React mounts");
+  test("throws EvaluatorModelIncompatibleError when grace limit is exhausted", async () => {
+    mock.module("../llm/create-client.ts", () => ({
+      createLLMClient: () => ({
+        async chat() {
+          // Model always returns [object Object] refs — never corrects itself
+          return {
+            content: null,
+            toolCalls: [
+              {
+                id: `call_${Date.now()}`,
+                name: "browser_click",
+                arguments: { ref: "[object Object]" },
+              },
+            ],
+            usage: { promptTokens: 100, completionTokens: 10, totalTokens: 110, llmCallCount: 1 },
+            finishReason: "tool_calls",
+          };
+        },
+      }),
+    }));
+
+    const { runEvaluatorAgent, EvaluatorModelIncompatibleError } = await import("../agents/evaluator-agent.ts");
+    const tmpDesignFile = `/tmp/eval-design-incompat-${Date.now()}.md`;
+    const tmpPlanFile = `/tmp/eval-plan-incompat-${Date.now()}.md`;
+    const tmpMemoryFile = `/tmp/eval-memory-incompat-${Date.now()}.md`;
+    trackedFiles.push(tmpDesignFile, tmpPlanFile, tmpMemoryFile);
+    await Bun.write(tmpDesignFile, "# App Design\n\nA simple todo app.");
+
+    await expect(
+      runEvaluatorAgent(
+        "gemma-4-incompatible",
+        { type: "copilot" },
+        "http://localhost:3000",
+        "# App Design\n\nA simple todo app.",
+        tmpPlanFile,
+        tmpDesignFile,
+        tmpMemoryFile,
+        "/tmp/eval-incompat-output",
+        "chrome",
+        true,
+        "You are an expert UX evaluator.",
+      )
+    ).rejects.toThrow(EvaluatorModelIncompatibleError);
+
+    // Restore the shared mock so subsequent tests work correctly
+    mock.module("../llm/create-client.ts", () => ({
+      createLLMClient: () => ({
+        async chat() {
+          if (mockDecision === "pass") {
+            return {
+              content: null,
+              toolCalls: [{ id: "call_1", name: "decide_pass", arguments: { explanation: "App matches design perfectly" } }],
+              usage: { promptTokens: 500, completionTokens: 100, totalTokens: 600, llmCallCount: 1 },
+              finishReason: "tool_calls",
+            };
+          }
+          return {
+            content: null,
+            toolCalls: [{ id: "call_1", name: "decide_needs_work", arguments: { explanation: "Header is missing", corrections: "Add a header component with the app name" } }],
+            usage: { promptTokens: 500, completionTokens: 150, totalTokens: 650, llmCallCount: 1 },
+            finishReason: "tool_calls",
+          };
+        },
+      }),
+    }));
   });
 });
 

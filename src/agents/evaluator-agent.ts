@@ -5,6 +5,17 @@ import type { LLMMessage, ToolDefinition } from "../llm/types.ts";
 import { PlaywrightMcpServer } from "../mcp/playwright-mcp-server.ts";
 import type { McpTool } from "../mcp/mcp-client.ts";
 
+export class EvaluatorModelIncompatibleError extends Error {
+  constructor(model: string) {
+    super(
+      `Evaluator model "${model}" is not compatible with Playwright MCP.\n` +
+      `The model repeatedly used "[object Object]" as element refs even after format corrections.\n` +
+      `Fix: change "evaluatorAgent.model" in config.json to a model that understands playwright-mcp's ARIA snapshot ref format (e.g. [ref=e5] → pass "e5").`
+    );
+    this.name = "EvaluatorModelIncompatibleError";
+  }
+}
+
 export type EvaluatorDecision = "PASS" | "NEEDS_WORK";
 
 export interface EvaluatorResult {
@@ -136,8 +147,6 @@ Use the available Playwright tools to navigate to the application, explore its f
   // a model facing a genuinely blank page will keep failing).
   let invalidRefCount = 0;
   const REF_FORMAT_GRACE_LIMIT = 3;
-  // Set only after grace limit is exhausted — triggers blank-page handling.
-  let invalidRefDetected = false;
 
   // Tool-calling loop
   for (let i = 0; i < maxToolCallIterations; i++) {
@@ -204,18 +213,16 @@ Use the available Playwright tools to navigate to the application, explore its f
           toolCallId: toolCall.id,
         });
       } else {
-        // Once invalid-ref escalation has been triggered for this evaluation,
-        // close out any remaining tool calls in the same batch without executing them.
-        if (invalidRefDetected) {
+        // Once a loop has been detected earlier in this same batch, silently
+        // close out remaining calls — only the first warning is printed.
+        if (loopDetectedThisTurn) {
           messages.push({
             role: "tool",
-            content: "Error: page appears blank — please call decide_needs_work.",
+            content: "Error: repeated call blocked — call decide_pass or decide_needs_work.",
             toolCallId: toolCall.id,
           });
           continue;
         }
-
-        // Execute Playwright MCP tool
 
         // ── Loop detection ────────────────────────────────────────────────────
         // Detect [object Object] refs — this means the model doesn't understand
@@ -223,7 +230,7 @@ Use the available Playwright tools to navigate to the application, explore its f
         // clear corrections before escalating to blank-page mode.
         const isInvalidRef = toolCall.arguments["ref"] === "[object Object]";
 
-        // Track call signature in rolling window
+        // Track call signature in rolling window (only for calls we'll execute)
         const callSig = `${toolCall.name}:${JSON.stringify(toolCall.arguments)}`;
         recentCallSigs.push(callSig);
         if (recentCallSigs.length > LOOP_WINDOW) recentCallSigs.shift();
@@ -248,19 +255,12 @@ Use the available Playwright tools to navigate to the application, explore its f
                   `Call browser_snapshot to see the current page elements and their refs, then retry with a valid ref string.`,
                 toolCallId: toolCall.id,
               });
-              loopDetectedThisTurn = true;
-              continue;
+            } else {
+              // Grace limit exhausted — the model can't use playwright-mcp refs.
+              // Stop Playwright and abort with a clear configuration error.
+              await playwright?.stop();
+              throw new EvaluatorModelIncompatibleError(model);
             }
-            // Grace limit exhausted — escalate to blank-page handling.
-            // Push a response for this tool call, then the guard at the top of the
-            // loop will short-circuit all remaining tool calls in the same batch.
-            console.log(`    ⚠️  Evaluator: ref format still invalid after ${invalidRefCount} attempts — treating as blank page`);
-            invalidRefDetected = true;
-            messages.push({
-              role: "tool",
-              content: "Error: invalid ref. Page appears blank — please call decide_needs_work.",
-              toolCallId: toolCall.id,
-            });
           } else {
             const reason = `"${toolCall.name}" has been called with identical arguments ${sigRepeatCount} times — stuck in a loop`;
             console.log(`    ⚠️  Evaluator loop: ${reason}`);
@@ -348,56 +348,7 @@ Use the available Playwright tools to navigate to the application, explore its f
       });
     }
 
-    // 4. If the page appeared blank (all snapshot refs were invalid), do one focused
-    // LLM call with rich context so it can write the best possible NEEDS_WORK decision.
-    if (invalidRefDetected && !decided) {
-      console.log(`    ⚠️  Blank page detected — Playwright snapshot returned no valid DOM elements. Requesting NEEDS_WORK decision from LLM...`);
-      onlyDecisionTools = true;
-      messages.push({
-        role: "user",
-        content:
-          `The application at ${appUrl} appears to have rendered a blank page. ` +
-          `All Playwright element refs returned "[object Object]" (invalid), which means the page snapshot found no DOM elements at all.\n\n` +
-          `Likely causes:\n` +
-          `- The JavaScript framework (e.g. React) failed to mount to the DOM\n` +
-          `- A JavaScript error or unhandled exception prevented rendering\n` +
-          `- The HTML root element is missing or has the wrong id\n` +
-          `- The build output is empty, malformed, or not being served correctly\n` +
-          `- A missing dependency, failed import, or syntax error crashed the app\n\n` +
-          `You no longer have access to Playwright tools. Based on the design document and these observations, ` +
-          `call decide_needs_work with:\n` +
-          `- explanation: describe what you observed (blank/unrendered page, no DOM elements)\n` +
-          `- corrections: specific, actionable fixes the implementation agent must make`,
-      });
-
-      const blankPageResponse = await client.chat(messages, DECISION_TOOLS);
-      usage = addTokenUsage(usage, blankPageResponse.usage);
-      messages.push({
-        role: "assistant",
-        content: blankPageResponse.content,
-        toolCalls: blankPageResponse.toolCalls.length > 0 ? blankPageResponse.toolCalls : undefined,
-      });
-
-      for (const tc of blankPageResponse.toolCalls) {
-        if (tc.name === "decide_pass") {
-          decision = "PASS";
-          explanation = String(tc.arguments["explanation"] ?? "");
-          decided = true;
-          messages.push({ role: "tool", content: "Decision recorded: PASS", toolCallId: tc.id });
-        } else if (tc.name === "decide_needs_work") {
-          decision = "NEEDS_WORK";
-          explanation = String(tc.arguments["explanation"] ?? "");
-          corrections = String(tc.arguments["corrections"] ?? "");
-          decided = true;
-          messages.push({ role: "tool", content: "Decision recorded: NEEDS_WORK", toolCallId: tc.id });
-        }
-      }
-
-      break; // exit outer loop regardless — blank page is unambiguous
-    }
-
-    // 5. If a generic loop was detected this turn (not blank-page), strip Playwright tools
-    // and demand a decision on the next iteration.
+    // 4. If a loop was detected this turn, strip Playwright tools and demand a decision.
     if (loopDetectedThisTurn && !decided) {
       onlyDecisionTools = true;
       messages.push({

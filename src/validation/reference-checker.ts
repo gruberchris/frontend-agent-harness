@@ -98,7 +98,12 @@ export async function findBrokenReferences(appDir: string): Promise<BrokenRefere
       const ref = m[1]!;
       const resolved = await resolveRelativeImport(ref, fromDir);
       if (!resolved) {
-        const guessed = path.extname(ref) ? ref : ref + ".ts";
+        const importerExt = path.extname(tsRel);
+        const defaultExt =
+          importerExt === ".tsx" ? ".tsx" :
+          importerExt === ".jsx" ? ".jsx" :
+          ".ts";
+        const guessed = path.extname(ref) ? ref : ref + defaultExt;
         add(tsRel, path.relative(appDir, path.join(fromDir, guessed)));
       }
     }

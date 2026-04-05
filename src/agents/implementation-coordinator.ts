@@ -3,6 +3,7 @@ import { getNextPendingTask, readPlanHeader, updateTaskStatus } from "../plan/pl
 import { runImplementationAgent } from "./implementation-agent.ts";
 import { type DesignContent } from "../design/design-loader.ts";
 import type { ProviderConfig } from "../llm/provider.ts";
+import type { PlanTask } from "../plan/types.ts";
 import chalk from "chalk";
 import * as path from "node:path";
 import * as fs from "node:fs/promises";
@@ -61,7 +62,7 @@ async function readFileCapped(filePath: string, cap = 3_000): Promise<string | n
   return text.length > cap ? text.slice(0, cap) + "\n... (truncated)" : text;
 }
 
-async function buildProjectContext(planFile: string, outputDir: string, contextCap = 50_000): Promise<string> {
+async function buildProjectContext(planFile: string, outputDir: string, task?: PlanTask, contextCap = 50_000): Promise<string> {
   const parts: string[] = [];
   const absOutputDir = path.resolve(outputDir);
 
@@ -75,48 +76,85 @@ async function buildProjectContext(planFile: string, outputDir: string, contextC
   const tree = await buildFileTree(absOutputDir, 2);
   parts.push(`## Current Output Directory Structure\n${tree || "(empty — no files yet)"}`);
 
-  // 3. Key file contents — injected upfront so the agent doesn't burn tool-call
-  //    iterations reading the same files on every task.
-  //    Tech-agnostic: reads whatever small files exist at the root and in immediate
-  //    subdirectories. Works for React/Vite, ASP.NET, Go, static HTML, etc.
+  // 3. Smart Key File Contents — prioritize core configs and task-related files
   const SKIP_DIRS = new Set([
-    "node_modules", "dist", "build", "bin", "obj", ".git", ".vite", "coverage", "__pycache__",
+    "node_modules", "dist", "build", "bin", "obj", ".git", ".vite", "coverage", "__pycache__", ".idea", ".vscode"
   ]);
+  const EXCLUDE_FILES = new Set([
+    "README.md", "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb", "bun.lock", ".env.example", ".gitignore"
+  ]);
+  const ALWAYS_INCLUDE = new Set([
+    "package.json", "tsconfig.json", "vite.config.ts", "tailwind.config.ts", "tailwind.config.js", "next.config.js", "index.html"
+  ]);
+
   const keyParts: string[] = [];
-
-  const rootEntries = await fs.readdir(absOutputDir, { withFileTypes: true }).catch(() => []);
-
-  // Root-level files (project configs, manifests, entry points, etc.)
-  for (const entry of rootEntries.filter((e) => e.isFile()).slice(0, 12)) {
-    const content = await readFileCapped(path.join(absOutputDir, entry.name), 2_000);
-    if (content !== null) keyParts.push(`**${entry.name}**\n\`\`\`\n${content}\n\`\`\``);
+  const taskKeywords = new Set<string>();
+  if (task) {
+    const text = `${task.title} ${task.description}`.toLowerCase();
+    // Extract potential filenames or component names
+    const words = text.match(/[a-z0-9.-]+/g) || [];
+    for (const w of words) {
+      if (w.length > 3) taskKeywords.add(w);
+    }
   }
 
-  // Files in immediate non-excluded subdirectories (e.g. src/, pages/, wwwroot/)
-  const subDirs = rootEntries
-    .filter((e) => e.isDirectory() && !SKIP_DIRS.has(e.name))
-    .slice(0, 4);
-  for (const dir of subDirs) {
-    const dirPath = path.join(absOutputDir, dir.name);
-    const subEntries = await fs.readdir(dirPath, { withFileTypes: true }).catch(() => []);
-    for (const entry of subEntries.filter((e) => e.isFile()).slice(0, 6)) {
-      const rel = `${dir.name}/${entry.name}`;
-      const content = await readFileCapped(path.join(dirPath, entry.name), 1_500);
-      if (content !== null) keyParts.push(`**${rel}**\n\`\`\`\n${content}\n\`\`\``);
+  async function gatherFiles(dir: string, relDir: string, depth: number): Promise<{relPath: string, path: string, isPriority: boolean}[]> {
+    if (depth > 2) return []; // limit recursion depth
+    let entries;
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      return [];
     }
 
-    // One extra level deep for any nested subdirectory (e.g. src/utils/, src/hooks/, src/components/).
-    // Use a smaller per-file cap — enough to show exports/signatures — since deeper files are more
-    // numerous. The total contextCap applied at the end still bounds the overall size.
-    const deepFileCap = Math.max(300, Math.floor(contextCap / 40));
-    for (const subEntry of subEntries.filter((e) => e.isDirectory() && !SKIP_DIRS.has(e.name)).slice(0, 4)) {
-      const subDirPath = path.join(dirPath, subEntry.name);
-      const deepEntries = await fs.readdir(subDirPath, { withFileTypes: true }).catch(() => []);
-      for (const deepEntry of deepEntries.filter((e) => e.isFile()).slice(0, 6)) {
-        const rel = `${dir.name}/${subEntry.name}/${deepEntry.name}`;
-        const content = await readFileCapped(path.join(subDirPath, deepEntry.name), deepFileCap);
-        if (content !== null) keyParts.push(`**${rel}**\n\`\`\`\n${content}\n\`\`\``);
+    let files: {relPath: string, path: string, isPriority: boolean}[] = [];
+    for (const e of entries) {
+      if (e.isDirectory()) {
+        if (!SKIP_DIRS.has(e.name)) {
+          const subFiles = await gatherFiles(path.join(dir, e.name), relDir ? `${relDir}/${e.name}` : e.name, depth + 1);
+          files = files.concat(subFiles);
+        }
+      } else if (e.isFile()) {
+        if (EXCLUDE_FILES.has(e.name) || e.name.endsWith(".lock") || e.name.endsWith(".png") || e.name.endsWith(".jpg") || e.name.endsWith(".ico") || e.name.endsWith(".svg")) continue;
+        
+        const relPath = relDir ? `${relDir}/${e.name}` : e.name;
+        const isCore = ALWAYS_INCLUDE.has(e.name);
+        const nameLower = e.name.toLowerCase();
+        let isTaskRelated = false;
+        
+        // Check if filename matches any task keyword
+        const nameNoExt = nameLower.split('.')[0] || nameLower;
+        if (taskKeywords.has(nameNoExt)) {
+          isTaskRelated = true;
+        }
+
+        files.push({ relPath, path: path.join(dir, e.name), isPriority: isCore || isTaskRelated });
       }
+    }
+    return files;
+  }
+
+  const allFiles = await gatherFiles(absOutputDir, "", 0);
+  
+  // Sort: Priority files first, then root files, then alphabetize
+  allFiles.sort((a, b) => {
+    if (a.isPriority && !b.isPriority) return -1;
+    if (!a.isPriority && b.isPriority) return 1;
+    
+    const aIsRoot = !a.relPath.includes("/");
+    const bIsRoot = !b.relPath.includes("/");
+    if (aIsRoot && !bIsRoot) return -1;
+    if (!aIsRoot && bIsRoot) return 1;
+    
+    return a.relPath.localeCompare(b.relPath);
+  });
+
+  // Take top N files to fit within a reasonable number before context cap
+  for (const file of allFiles.slice(0, 15)) {
+    const cap = file.isPriority ? 3_000 : 1_000;
+    const content = await readFileCapped(file.path, cap);
+    if (content !== null) {
+      keyParts.push(`**${file.relPath}**\n\`\`\`\n${content}\n\`\`\``);
     }
   }
 
@@ -179,7 +217,7 @@ export async function runImplementationCoordinator(
     const attemptLabel = attempts === 0 ? "" : ` (retry ${attempts}/${maxTaskRetries - 1})`;
     console.log(chalk.cyan(`\n▶️  Implementing Task ${nextTask.number}: ${nextTask.title}${attemptLabel}`));
 
-    const projectContext = await buildProjectContext(planFile, outputDir, projectContextChars);
+    const projectContext = await buildProjectContext(planFile, outputDir, nextTask, projectContextChars);
 
     // Send design images only for the first task or visually focused tasks.
     // Resending large base64 images on every task wastes significant tokens.

@@ -133,6 +133,17 @@ const IMPL_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: "update_scratchpad",
+    description: "Write important notes, findings, or file summaries to your persistent scratchpad. This survives conversation trimming, preventing you from forgetting critical details.",
+    parameters: {
+      type: "object",
+      properties: {
+        notes: { type: "string", description: "The content to save to the scratchpad. Overwrites the previous content." },
+      },
+      required: ["notes"],
+    },
+  },
+  {
     name: "mark_task_complete",
     description: "Mark the current task as completed. Call this when implementation is done.",
     parameters: {
@@ -195,15 +206,21 @@ export async function runImplementationAgent(
     ? design.text.slice(0, DESIGN_TEXT_CAP) + `\n\n...(design text truncated at ${DESIGN_TEXT_CAP} chars — full spec captured in plan header above)`
     : design.text;
 
+  let scratchpadContent = "";
+  
+  const buildContextMessage = () => {
+    const scratchpadSection = scratchpadContent
+      ? `## Agent Scratchpad (Persistent Memory)\n${scratchpadContent}\n\n---\n\n`
+      : "";
+    return buildMessageContent(
+      `${contextSection}${scratchpadSection}Implement the following task:\n\n### Task ${task.number}: ${task.title}\n**Description**: ${task.description}\n**Acceptance Criteria**: ${task.acceptanceCriteria}\n**Example Code**:\n${task.exampleCode}\n\n---\n\nDesign context:\n${designContext}\n\nBegin implementation now. The project context above shows the current state — ensure your changes are consistent with existing files and the declared tech stack.`,
+      design.images,
+    );
+  };
+
   const messages: LLMMessage[] = [
     { role: "system", content: systemPrompt },
-    {
-      role: "user",
-      content: buildMessageContent(
-        `${contextSection}Implement the following task:\n\n### Task ${task.number}: ${task.title}\n**Description**: ${task.description}\n**Acceptance Criteria**: ${task.acceptanceCriteria}\n**Example Code**:\n${task.exampleCode}\n\n---\n\nDesign context:\n${designContext}\n\nBegin implementation now. The project context above shows the current state — ensure your changes are consistent with existing files and the declared tech stack.`,
-        design.images,
-      ),
-    },
+    { role: "user", content: buildContextMessage() },
   ];
 
   // Mark task as in_progress
@@ -400,6 +417,19 @@ export async function runImplementationAgent(
             role: "tool",
             content:
               "Error: Your tool call arguments were cut off (JSON was incomplete). This means your response was too long. Please try again and write less content per file, or split the work across multiple smaller write_file calls.",
+            toolCallId: tc.id,
+          });
+          continue;
+        }
+
+        if (tc.name === "update_scratchpad") {
+          scratchpadContent = String(tc.arguments["notes"] ?? "");
+          // Update the first user message with the new scratchpad
+          messages[1]!.content = buildContextMessage();
+          console.log(`    📝 Scratchpad updated`);
+          messages.push({
+            role: "tool",
+            content: "Scratchpad updated successfully. This information will persist across trims.",
             toolCallId: tc.id,
           });
           continue;

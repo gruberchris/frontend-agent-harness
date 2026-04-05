@@ -119,7 +119,11 @@ const IMPL_TOOLS: ToolDefinition[] = [
   },
   {
     name: "run_command",
-    description: "Run a shell command in the output directory",
+    description:
+      "Run a shell command in the output directory. " +
+      "Only build, typecheck, test, and install commands are allowed. " +
+      "Do NOT use & to background processes — the harness starts the dev server automatically after all tasks complete. " +
+      "Do NOT start any server, watcher, or long-running daemon.",
     parameters: {
       type: "object",
       properties: {
@@ -625,6 +629,17 @@ async function executeTool(
 
       case "run_command": {
         const command = String(args["command"] ?? "");
+
+        // Reject shell background operator — it orphans processes that can
+        // occupy the dev server port and stall the pipeline.
+        // Match a bare & that is not part of &&, >&N (fd redirect), or &> / &>> (combined redirect).
+        if (/(?<![>&])&(?![&>\d])/.test(command)) {
+          return (
+            `Error: The command contains a shell background operator (&) which orphans processes. ` +
+            `Run commands sequentially without &. ` +
+            `The harness starts the dev server automatically after all tasks complete.`
+          );
+        }
 
         // Reject long-running server/watch processes — they never exit and will
         // always time out. The harness starts the dev server itself after all

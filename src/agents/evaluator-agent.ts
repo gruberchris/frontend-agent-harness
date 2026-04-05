@@ -85,6 +85,7 @@ export async function runEvaluatorAgent(
   llmTimeoutSecs?: number,
   maxToolCallIterations = 40,
   llmStreamTimeoutSecs?: number,
+  loopThreshold = 5,
 ): Promise<EvaluatorResult> {
   const client = createLLMClient(providerConfig, model, reasoningEffort, maxTokens, llmTimeoutSecs, undefined, undefined, llmStreamTimeoutSecs);
   let usage = emptyTokenUsage();
@@ -123,6 +124,8 @@ Original design document:
 ${designContent}
 ---
 
+Evaluate ONLY what is visible and interactive in the browser using Playwright tools. Do not attempt to verify files on the filesystem, server configuration, Dockerfiles, CI/CD pipelines, or any non-browser requirement — those are outside your scope.
+
 Use the available Playwright tools to navigate to the application, explore its features, take screenshots, and verify it matches the design. Then call decide_pass or decide_needs_work.`,
     },
   ];
@@ -135,7 +138,7 @@ Use the available Playwright tools to navigate to the application, explore its f
   // Loop detection: track the last N tool call signatures across all turns
   const recentCallSigs: string[] = [];
   const LOOP_WINDOW = 10;
-  const LOOP_THRESHOLD = 3; // same sig this many times in window = loop
+  const LOOP_THRESHOLD = loopThreshold;
 
   // When a loop is detected, strip Playwright tools so the model MUST decide.
   let onlyDecisionTools = false;
@@ -368,7 +371,7 @@ Use the available Playwright tools to navigate to the application, explore its f
       onlyDecisionTools = true;
       messages.push({
         role: "user",
-        content: `⚠️ You are stuck in a loop — repeated identical tool calls were detected and blocked. The page is likely blank or broken. You no longer have access to Playwright tools. Call decide_needs_work NOW with a description of what you observed and specific corrections for the implementation agent.`,
+        content: `⚠️ You are repeating identical tool calls — further Playwright calls have been blocked. You must now make your final decision based solely on what you have already observed.\n\nIf the app met the design requirements based on your observations, call decide_pass. If you observed genuine discrepancies (wrong UI, missing features, broken functionality), call decide_needs_work with specific corrections. Do not call decide_needs_work simply because you did not finish exploring — base your decision only on actual problems you saw.`,
       });
     }
 

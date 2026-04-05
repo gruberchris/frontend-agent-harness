@@ -16,6 +16,11 @@ const AgentConfigSchema = z.object({
   frequencyPenalty: z.number().min(-2).max(2).optional(),
 });
 
+const EvaluatorAgentConfigSchema = AgentConfigSchema.extend({
+  /** How many times the same Playwright tool call (identical name + args) may appear in the evaluator's recent call window before the loop guard fires (default 5). Raise this if the evaluator is being cut off too aggressively. */
+  loopThreshold: z.number().int().min(1).optional(),
+});
+
 export const HarnessConfigSchema = z.object({
   provider: ProviderConfigSchema,
   maxEvaluatorIterations: z.number().int().min(1),
@@ -51,7 +56,7 @@ export const HarnessConfigSchema = z.object({
     taskAgent: AgentConfigSchema,
     implementationCoordinator: AgentConfigSchema,
     implementationAgent: AgentConfigSchema,
-    evaluatorAgent: AgentConfigSchema,
+    evaluatorAgent: EvaluatorAgentConfigSchema,
   }),
 });
 
@@ -159,6 +164,7 @@ Rules:
     },
     evaluatorAgent: {
       model: "gpt-4o",
+      loopThreshold: 5,
       systemPrompt: `You are an expert UX evaluator and QA engineer. Your job is to:
 1. Navigate to the running web application using Playwright tools
 2. Take screenshots and interact with the UI

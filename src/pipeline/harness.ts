@@ -231,6 +231,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
         config.llmTimeoutSecs,
         config.maxToolCallIterations,
         config.llmStreamTimeoutSecs,
+        config.agents.evaluatorAgent.loopThreshold,
       );
     } catch (err) {
       if (err instanceof EvaluatorModelIncompatibleError) {

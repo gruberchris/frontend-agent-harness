@@ -4,7 +4,7 @@ import type { TokenUsage } from "../llm/types.ts";
 export interface AgentStepStats {
   name: string;
   usage: TokenUsage;
-  callCount: number;
+  invocationCount: number;
 }
 
 export interface PipelineReport {
@@ -21,53 +21,55 @@ export function printReport(report: PipelineReport): void {
       promptTokens: acc.promptTokens + s.usage.promptTokens,
       completionTokens: acc.completionTokens + s.usage.completionTokens,
       totalTokens: acc.totalTokens + s.usage.totalTokens,
+      llmCallCount: acc.llmCallCount + s.usage.llmCallCount,
     }),
-    { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+    { promptTokens: 0, completionTokens: 0, totalTokens: 0, llmCallCount: 0 },
   );
 
   const elapsed = formatElapsed(report.elapsedMs);
 
-  console.log("\n" + chalk.bold("═".repeat(84)));
-  console.log(chalk.bold("  Pipeline Report"));
-  console.log(chalk.bold("═".repeat(84)));
+  console.log("\n" + chalk.bold("═".repeat(80)));
+  console.log(chalk.bold("  Workflow Report"));
+  console.log(chalk.bold("═".repeat(80)));
 
-  const COL_NAME = 34;
-  const COL_NUM = 14;
+  const COL_NAME = 28;
+  const COL_PROMPT = 12;
+  const COL_COMPLETION = 15;
+  const COL_TOTAL = 12;
+  const COL_REQUESTS = 13;
 
   const header = [
     padEnd("Step", COL_NAME),
-    padStart("Prompt", COL_NUM),
-    padStart("Completion", COL_NUM),
-    padStart("Total", COL_NUM),
-    padStart("Requests", 10),
+    padStart("Prompt", COL_PROMPT),
+    padStart("Completion", COL_COMPLETION),
+    padStart("Total", COL_TOTAL),
+    padStart("Requests", COL_REQUESTS),
   ].join("");
   console.log(chalk.dim(header));
-  console.log(chalk.dim("─".repeat(84)));
+  console.log(chalk.dim("─".repeat(80)));
 
   for (const step of report.steps) {
-    const label = step.callCount > 1 ? `${step.name} (×${step.callCount})` : step.name;
+    const label = step.invocationCount > 1 ? `${step.name} (×${step.invocationCount})` : step.name;
     const row = [
       padEnd(label, COL_NAME),
-      padStart(step.usage.promptTokens.toLocaleString(), COL_NUM),
-      padStart(step.usage.completionTokens.toLocaleString(), COL_NUM),
-      padStart(step.usage.totalTokens.toLocaleString(), COL_NUM),
-      padStart(String(step.callCount), 10),
+      padStart(step.usage.promptTokens.toLocaleString(), COL_PROMPT),
+      padStart(step.usage.completionTokens.toLocaleString(), COL_COMPLETION),
+      padStart(step.usage.totalTokens.toLocaleString(), COL_TOTAL),
+      padStart(String(step.usage.llmCallCount), COL_REQUESTS),
     ].join("");
     console.log(row);
   }
 
-  const grandTotalRequests = report.steps.reduce((acc, s) => acc + s.callCount, 0);
-
-  console.log(chalk.dim("─".repeat(84)));
+  console.log(chalk.dim("─".repeat(80)));
   const totalRow = [
-    padEnd(chalk.bold("GRAND TOTAL"), COL_NAME),
-    padStart(chalk.bold(grandTotal.promptTokens.toLocaleString()), COL_NUM),
-    padStart(chalk.bold(grandTotal.completionTokens.toLocaleString()), COL_NUM),
-    padStart(chalk.bold(grandTotal.totalTokens.toLocaleString()), COL_NUM),
-    padStart(chalk.bold(String(grandTotalRequests)), 10),
+    padEnd("", COL_NAME),
+    padStart(chalk.bold(grandTotal.promptTokens.toLocaleString()), COL_PROMPT),
+    padStart(chalk.bold(grandTotal.completionTokens.toLocaleString()), COL_COMPLETION),
+    padStart(chalk.bold(grandTotal.totalTokens.toLocaleString()), COL_TOTAL),
+    padStart(chalk.bold(String(grandTotal.llmCallCount)), COL_REQUESTS),
   ].join("");
   console.log(totalRow);
-  console.log(chalk.bold("═".repeat(84)));
+  console.log(chalk.bold("═".repeat(80)));
 
   const resultColor = report.result === "SUCCESS" ? chalk.green : chalk.red;
   console.log(

@@ -156,7 +156,7 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
     let content = "";
     let finishReason: LLMResponse["finishReason"] = "stop";
     const toolCallsAcc = new Map<number, { id: string; name: string; arguments: string }>();
-    let usage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+    let usage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0, llmCallCount: 0 };
     let hasChoices = false;
 
     try {
@@ -192,6 +192,7 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
             promptTokens: chunk.usage.prompt_tokens ?? 0,
             completionTokens: chunk.usage.completion_tokens ?? 0,
             totalTokens: chunk.usage.total_tokens ?? 0,
+            llmCallCount: 1,
           };
           if (chunk.usage.completion_tokens) { /* usage captured above */ }
         }

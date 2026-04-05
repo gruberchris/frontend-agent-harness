@@ -126,7 +126,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
       config.llmStreamTimeoutSecs,
     );
     taskAgentUsage = addTokenUsage(taskAgentUsage, taskResult.usage);
-    taskAgentCalls++;
+    taskAgentCalls += 1;
     console.log(chalk.green(`✅ plan.md generated`));
   }
 
@@ -231,7 +231,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
       config.llmStreamTimeoutSecs,
     );
     evaluatorUsage = addTokenUsage(evaluatorUsage, evalResult.usage);
-    evaluatorCalls++;
+    evaluatorCalls += 1;
 
     if (evalResult.decision === "PASS") {
       result = "SUCCESS";
@@ -277,7 +277,7 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
       config.llmStreamTimeoutSecs,
     );
     taskAgentUsage = addTokenUsage(taskAgentUsage, reTaskResult.usage);
-    taskAgentCalls++;
+    taskAgentCalls += 1;
     console.log(chalk.green(`✅ Correction tasks appended to plan.md (starting at Task ${nextTaskNumber})`));
   }
 
@@ -288,13 +288,9 @@ export async function runHarness(config: HarnessConfig): Promise<PipelineReport>
   }
 
   // ── Build report ─────────────────────────────────────────────────────────────
-  steps.push({ name: "Task Agent", usage: taskAgentUsage, callCount: taskAgentCalls });
-  steps.push({
-    name: "Implementation Agent",
-    usage: implCoordUsage,
-    callCount: implCoordCalls,
-  });
-  steps.push({ name: "Evaluator Agent", usage: evaluatorUsage, callCount: evaluatorCalls });
+  steps.push({ name: "Task Agent", usage: taskAgentUsage, invocationCount: taskAgentCalls });
+  steps.push({ name: "Implementation Agent", usage: implCoordUsage, invocationCount: implCoordCalls });
+  steps.push({ name: "Evaluator Agent", usage: evaluatorUsage, invocationCount: evaluatorCalls });
 
   const report: PipelineReport = {
     steps,

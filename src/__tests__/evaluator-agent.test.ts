@@ -61,7 +61,7 @@ mock.module("../llm/create-client.ts", () => ({
               arguments: { explanation: "App matches design perfectly" },
             },
           ],
-          usage: { promptTokens: 500, completionTokens: 100, totalTokens: 600 },
+          usage: { promptTokens: 500, completionTokens: 100, totalTokens: 600, llmCallCount: 1 },
           finishReason: "tool_calls",
         };
       } else {
@@ -77,7 +77,7 @@ mock.module("../llm/create-client.ts", () => ({
               },
             },
           ],
-          usage: { promptTokens: 500, completionTokens: 150, totalTokens: 650 },
+          usage: { promptTokens: 500, completionTokens: 150, totalTokens: 650, llmCallCount: 1 },
           finishReason: "tool_calls",
         };
       }
@@ -235,7 +235,7 @@ describe("runEvaluatorAgent - devServerError", () => {
           return {
             content: null,
             toolCalls: [{ id: "c1", name: "decide_needs_work", arguments: { explanation: "server down", corrections: "create src/main.tsx" } }],
-            usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+            usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, llmCallCount: 1 },
             finishReason: "tool_calls" as const,
           };
         },

@@ -23,7 +23,7 @@ const mockChatFn = mock(async (messages: unknown[]) => {
   return {
     content: isCorrection ? generateMockCorrectionTask(taskNum) : generateMockPlan(),
     toolCalls: [],
-    usage: { promptTokens: 100, completionTokens: 500, totalTokens: 600 },
+    usage: { promptTokens: 100, completionTokens: 500, totalTokens: 600, llmCallCount: 1 },
     finishReason: "stop" as const,
   };
 });

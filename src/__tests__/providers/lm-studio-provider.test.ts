@@ -96,6 +96,7 @@ describe("LmStudioProvider", () => {
     expect(response.usage.promptTokens).toBe(5);
     expect(response.usage.completionTokens).toBe(3);
     expect(response.usage.totalTokens).toBe(8);
+    expect(response.usage.llmCallCount).toBe(1);
     expect(response.finishReason).toBe("stop");
   });
 

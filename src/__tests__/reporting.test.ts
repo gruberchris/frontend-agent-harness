@@ -7,18 +7,18 @@ describe("printReport", () => {
       steps: [
         {
           name: "Task Agent",
-          usage: { promptTokens: 1000, completionTokens: 500, totalTokens: 1500 },
-          callCount: 1,
+          usage: { promptTokens: 1000, completionTokens: 500, totalTokens: 1500, llmCallCount: 1 },
+          invocationCount: 1,
         },
         {
           name: "Implementation Agent",
-          usage: { promptTokens: 5000, completionTokens: 2000, totalTokens: 7000 },
-          callCount: 3,
+          usage: { promptTokens: 5000, completionTokens: 2000, totalTokens: 7000, llmCallCount: 25 },
+          invocationCount: 25,
         },
         {
           name: "Evaluator Agent",
-          usage: { promptTokens: 2000, completionTokens: 800, totalTokens: 2800 },
-          callCount: 1,
+          usage: { promptTokens: 2000, completionTokens: 800, totalTokens: 2800, llmCallCount: 4 },
+          invocationCount: 4,
         },
       ],
       totalIterations: 1,
@@ -35,8 +35,8 @@ describe("printReport", () => {
       steps: [
         {
           name: "Task Agent",
-          usage: { promptTokens: 500, completionTokens: 200, totalTokens: 700 },
-          callCount: 1,
+          usage: { promptTokens: 500, completionTokens: 200, totalTokens: 700, llmCallCount: 1 },
+          invocationCount: 1,
         },
       ],
       totalIterations: 3,
@@ -73,9 +73,9 @@ describe("token aggregation in report", () => {
   test("grand total sums all steps correctly", () => {
     // Verify the math by re-implementing the calculation
     const steps = [
-      { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
-      { promptTokens: 200, completionTokens: 100, totalTokens: 300 },
-      { promptTokens: 300, completionTokens: 150, totalTokens: 450 },
+      { promptTokens: 100, completionTokens: 50, totalTokens: 150, llmCallCount: 1 },
+      { promptTokens: 200, completionTokens: 100, totalTokens: 300, llmCallCount: 5 },
+      { promptTokens: 300, completionTokens: 150, totalTokens: 450, llmCallCount: 2 },
     ];
 
     const grandTotal = steps.reduce(
@@ -83,8 +83,9 @@ describe("token aggregation in report", () => {
         promptTokens: acc.promptTokens + s.promptTokens,
         completionTokens: acc.completionTokens + s.completionTokens,
         totalTokens: acc.totalTokens + s.totalTokens,
+        llmCallCount: acc.llmCallCount + s.llmCallCount,
       }),
-      { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      { promptTokens: 0, completionTokens: 0, totalTokens: 0, llmCallCount: 0 },
     );
 
     expect(grandTotal.promptTokens).toBe(600);

@@ -25,7 +25,7 @@ mock.module("../llm/create-client.ts", () => ({
           toolCalls: [
             { id: "w1", name: "write_file", arguments: { path: "index.html", content: '<!DOCTYPE html><html lang="en"></html>' } },
           ],
-          usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
+          usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120, llmCallCount: 1 },
           finishReason: "tool_calls" as const,
         };
       }
@@ -35,7 +35,7 @@ mock.module("../llm/create-client.ts", () => ({
         toolCalls: [
           { id: "c1", name: "mark_task_complete", arguments: { summary: "Created index.html" } },
         ],
-        usage: { promptTokens: 50, completionTokens: 20, totalTokens: 70 },
+        usage: { promptTokens: 50, completionTokens: 20, totalTokens: 70, llmCallCount: 1 },
         finishReason: "tool_calls" as const,
       };
     },
@@ -180,7 +180,7 @@ describe("runImplementationAgent", () => {
             toolCalls: [
               { id: "w1", name: "write_file", arguments: { path: "index.html", content: '<!DOCTYPE html><html lang="en"></html>' } },
             ],
-            usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
+            usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120, llmCallCount: 1 },
             finishReason: "tool_calls" as const,
           };
         },
@@ -276,14 +276,14 @@ describe("replace_text tool", () => {
             return {
               content: null,
               toolCalls: [{ id: "r1", name: "replace_text", arguments: { path: "app.tsx", old_string: "hello", new_string: "world" } }],
-              usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+              usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, llmCallCount: 1 },
               finishReason: "tool_calls" as const,
             };
           }
           return {
             content: null,
             toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "Patched" } }],
-            usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+            usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, llmCallCount: 1 },
             finishReason: "tool_calls" as const,
           };
         },
@@ -316,7 +316,7 @@ describe("replace_text tool", () => {
             return {
               content: null,
               toolCalls: [{ id: "r1", name: "replace_text", arguments: { path: "app.tsx", old_string: "NOT_IN_FILE", new_string: "world" } }],
-              usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+              usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, llmCallCount: 1 },
               finishReason: "tool_calls" as const,
             };
           }
@@ -327,7 +327,7 @@ describe("replace_text tool", () => {
           return {
             content: null,
             toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "Done" } }],
-            usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+            usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, llmCallCount: 1 },
             finishReason: "tool_calls" as const,
           };
         },
@@ -371,9 +371,9 @@ describe("undo_edit tool", () => {
       createLLMClient: () => ({
         async chat() {
           seq++;
-          if (seq === 1) return { content: null, toolCalls: [{ id: "w1", name: "write_file", arguments: { path: "app.tsx", content: "new content\n" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
-          if (seq === 2) return { content: null, toolCalls: [{ id: "u1", name: "undo_edit", arguments: { path: "app.tsx" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
-          return { content: null, toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "Reverted" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+          if (seq === 1) return { content: null, toolCalls: [{ id: "w1", name: "write_file", arguments: { path: "app.tsx", content: "new content\n" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, llmCallCount: 1 }, finishReason: "tool_calls" as const };
+          if (seq === 2) return { content: null, toolCalls: [{ id: "u1", name: "undo_edit", arguments: { path: "app.tsx" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, llmCallCount: 1 }, finishReason: "tool_calls" as const };
+          return { content: null, toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "Reverted" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, llmCallCount: 1 }, finishReason: "tool_calls" as const };
         },
       }),
     }));
@@ -399,9 +399,9 @@ describe("undo_edit tool", () => {
       createLLMClient: () => ({
         async chat() {
           seq++;
-          if (seq === 1) return { content: null, toolCalls: [{ id: "r1", name: "replace_text", arguments: { path: "app.tsx", old_string: "original", new_string: "modified" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
-          if (seq === 2) return { content: null, toolCalls: [{ id: "u1", name: "undo_edit", arguments: { path: "app.tsx" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
-          return { content: null, toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "Reverted" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+          if (seq === 1) return { content: null, toolCalls: [{ id: "r1", name: "replace_text", arguments: { path: "app.tsx", old_string: "original", new_string: "modified" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, llmCallCount: 1 }, finishReason: "tool_calls" as const };
+          if (seq === 2) return { content: null, toolCalls: [{ id: "u1", name: "undo_edit", arguments: { path: "app.tsx" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, llmCallCount: 1 }, finishReason: "tool_calls" as const };
+          return { content: null, toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "Reverted" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, llmCallCount: 1 }, finishReason: "tool_calls" as const };
         },
       }),
     }));
@@ -428,11 +428,11 @@ describe("undo_edit tool", () => {
       createLLMClient: () => ({
         async chat(messages: unknown[]) {
           seq++;
-          if (seq === 1) return { content: null, toolCalls: [{ id: "u1", name: "undo_edit", arguments: { path: "never-written-before.tsx" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+          if (seq === 1) return { content: null, toolCalls: [{ id: "u1", name: "undo_edit", arguments: { path: "never-written-before.tsx" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, llmCallCount: 1 }, finishReason: "tool_calls" as const };
           const msgs = messages as Array<{ role: string; content: string }>;
           const toolMsg = msgs.findLast((m) => m.role === "tool");
           if (toolMsg) capturedToolResult = toolMsg.content;
-          return { content: null, toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "Done" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+          return { content: null, toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "Done" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, llmCallCount: 1 }, finishReason: "tool_calls" as const };
         },
       }),
     }));
@@ -459,9 +459,9 @@ describe("design text truncation", () => {
             capturedUserContent = msgs.find((m) => m.role === "user")?.content;
           }
           if (seq % 2 === 1) {
-            return { content: null, toolCalls: [{ id: "w1", name: "write_file", arguments: { path: "t.html", content: "<h1>x</h1>" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+            return { content: null, toolCalls: [{ id: "w1", name: "write_file", arguments: { path: "t.html", content: "<h1>x</h1>" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, llmCallCount: 1 }, finishReason: "tool_calls" as const };
           }
-          return { content: null, toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "Done" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+          return { content: null, toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "Done" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, llmCallCount: 1 }, finishReason: "tool_calls" as const };
         },
       }),
     }));
@@ -494,9 +494,9 @@ describe("design text truncation", () => {
             capturedUserContent = msgs.find((m) => m.role === "user")?.content;
           }
           if (seq % 2 === 1) {
-            return { content: null, toolCalls: [{ id: "w1", name: "write_file", arguments: { path: "u.html", content: "<h1>y</h1>" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+            return { content: null, toolCalls: [{ id: "w1", name: "write_file", arguments: { path: "u.html", content: "<h1>y</h1>" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, llmCallCount: 1 }, finishReason: "tool_calls" as const };
           }
-          return { content: null, toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "Done" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+          return { content: null, toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "Done" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, llmCallCount: 1 }, finishReason: "tool_calls" as const };
         },
       }),
     }));
@@ -527,15 +527,15 @@ describe("run_command output truncation", () => {
           seq++;
           if (seq === 1) {
             // Return a run_command that produces a lot of stdout
-            return { content: null, toolCalls: [{ id: "r1", name: "run_command", arguments: { command: "seq 1 500" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+            return { content: null, toolCalls: [{ id: "r1", name: "run_command", arguments: { command: "seq 1 500" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, llmCallCount: 1 }, finishReason: "tool_calls" as const };
           }
           if (seq === 2) {
             // Capture the tool result the agent received
             const msgs = messages as Array<{ role: string; content: unknown }>;
             capturedToolResult = msgs.findLast((m) => m.role === "tool")?.content;
-            return { content: null, toolCalls: [{ id: "w1", name: "write_file", arguments: { path: "v.html", content: "<h1>z</h1>" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+            return { content: null, toolCalls: [{ id: "w1", name: "write_file", arguments: { path: "v.html", content: "<h1>z</h1>" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, llmCallCount: 1 }, finishReason: "tool_calls" as const };
           }
-          return { content: null, toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "Done" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+          return { content: null, toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "Done" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, llmCallCount: 1 }, finishReason: "tool_calls" as const };
         },
       }),
     }));
@@ -565,14 +565,14 @@ describe("run_command output truncation", () => {
           seq++;
           if (seq === 1) {
             // Command that produces long stdout AND stderr
-            return { content: null, toolCalls: [{ id: "r1", name: "run_command", arguments: { command: "seq 1 1000; seq 1 1000 >&2" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+            return { content: null, toolCalls: [{ id: "r1", name: "run_command", arguments: { command: "seq 1 1000; seq 1 1000 >&2" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, llmCallCount: 1 }, finishReason: "tool_calls" as const };
           }
           if (seq === 2) {
             const msgs = messages as Array<{ role: string; content: unknown }>;
             capturedToolResult = String(msgs.findLast((m) => m.role === "tool")?.content ?? "");
-            return { content: null, toolCalls: [{ id: "w1", name: "write_file", arguments: { path: "w.html", content: "<h1>w</h1>" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+            return { content: null, toolCalls: [{ id: "w1", name: "write_file", arguments: { path: "w.html", content: "<h1>w</h1>" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, llmCallCount: 1 }, finishReason: "tool_calls" as const };
           }
-          return { content: null, toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "Done" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+          return { content: null, toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "Done" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, llmCallCount: 1 }, finishReason: "tool_calls" as const };
         },
       }),
     }));
@@ -613,9 +613,9 @@ describe("agent path normalization", () => {
         async chat() {
           seq++;
           if (seq === 1) {
-            return { content: null, toolCalls: [{ id: "w1", name: "write_file", arguments: { path: agentPath, content: "// main" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+            return { content: null, toolCalls: [{ id: "w1", name: "write_file", arguments: { path: agentPath, content: "// main" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, llmCallCount: 1 }, finishReason: "tool_calls" as const };
           }
-          return { content: null, toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "Done" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+          return { content: null, toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "Done" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, llmCallCount: 1 }, finishReason: "tool_calls" as const };
         },
       }),
     }));
@@ -641,7 +641,7 @@ describe("consecutive-loop abort", () => {
             toolCalls: [
               { id: "r1", name: "run_command", arguments: { command: "echo stuck" } },
             ],
-            usage: { promptTokens: 50, completionTokens: 10, totalTokens: 60 },
+            usage: { promptTokens: 50, completionTokens: 10, totalTokens: 60, llmCallCount: 1 },
             finishReason: "tool_calls" as const,
           };
         },

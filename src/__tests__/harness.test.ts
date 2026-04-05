@@ -11,7 +11,7 @@ afterEach(async () => {
   // Reset coordinator result to the default happy path after each test
   coordResult = {
     tasksCompleted: 1,
-    usage: { promptTokens: 500, completionTokens: 1000, totalTokens: 1500 },
+    usage: { promptTokens: 500, completionTokens: 1000, totalTokens: 1500, llmCallCount: 8 },
   };
 });
 
@@ -33,7 +33,7 @@ console.log("hello");
     );
     return {
       planContent: "mock plan",
-      usage: { promptTokens: 100, completionTokens: 200, totalTokens: 300 },
+      usage: { promptTokens: 100, completionTokens: 200, totalTokens: 300, llmCallCount: 1 },
     };
   }),
 }));
@@ -44,11 +44,11 @@ mock.module("../agents/implementation-coordinator.ts", () => ({
 
 let coordResult: {
   tasksCompleted: number;
-  usage: { promptTokens: number; completionTokens: number; totalTokens: number };
+  usage: { promptTokens: number; completionTokens: number; totalTokens: number; llmCallCount: number };
   permanentlyFailedTask?: { number: number; title: string };
 } = {
   tasksCompleted: 1,
-  usage: { promptTokens: 500, completionTokens: 1000, totalTokens: 1500 },
+  usage: { promptTokens: 500, completionTokens: 1000, totalTokens: 1500, llmCallCount: 8 },
 };
 
 let evalCallCount = 0;
@@ -62,13 +62,13 @@ mock.module("../agents/evaluator-agent.ts", () => ({
       return {
         decision: "PASS",
         explanation: "All good",
-        usage: { promptTokens: 200, completionTokens: 100, totalTokens: 300 },
+        usage: { promptTokens: 200, completionTokens: 100, totalTokens: 300, llmCallCount: 3 },
       };
     }
     return {
       decision: "NEEDS_WORK",
       explanation: "Issues found",
-      usage: { promptTokens: 200, completionTokens: 100, totalTokens: 300 },
+      usage: { promptTokens: 200, completionTokens: 100, totalTokens: 300, llmCallCount: 5 },
     };
   }),
 }));
@@ -320,7 +320,7 @@ describe("runHarness - permanently failed task", () => {
     // Simulate the coordinator returning a permanently failed task
     coordResult = {
       tasksCompleted: 0,
-      usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+      usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150, llmCallCount: 2 },
       permanentlyFailedTask: { number: 3, title: "Build the widget" },
     };
 

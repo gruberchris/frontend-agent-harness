@@ -97,6 +97,7 @@ describe("CopilotProvider", () => {
     expect(response.usage.promptTokens).toBe(10);
     expect(response.usage.completionTokens).toBe(5);
     expect(response.usage.totalTokens).toBe(15);
+    expect(response.usage.llmCallCount).toBe(1);
     expect(response.finishReason).toBe("stop");
   });
 

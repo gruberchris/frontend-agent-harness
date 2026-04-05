@@ -2,6 +2,7 @@ export interface TokenUsage {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  llmCallCount: number;
 }
 
 export interface ToolDefinition {
@@ -35,7 +36,7 @@ export interface LLMResponse {
 }
 
 export function emptyTokenUsage(): TokenUsage {
-  return { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+  return { promptTokens: 0, completionTokens: 0, totalTokens: 0, llmCallCount: 0 };
 }
 
 export function addTokenUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
@@ -43,5 +44,6 @@ export function addTokenUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
     promptTokens: a.promptTokens + b.promptTokens,
     completionTokens: a.completionTokens + b.completionTokens,
     totalTokens: a.totalTokens + b.totalTokens,
+    llmCallCount: a.llmCallCount + b.llmCallCount,
   };
 }

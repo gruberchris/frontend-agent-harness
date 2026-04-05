@@ -29,7 +29,7 @@ mock.module("../llm/create-client.ts", () => ({
           toolCalls: [
             { id: "w1", name: "write_file", arguments: { path: "index.html", content: '<html lang="en"></html>' } },
           ],
-          usage: { promptTokens: 70, completionTokens: 30, totalTokens: 100 },
+          usage: { promptTokens: 70, completionTokens: 30, totalTokens: 100, llmCallCount: 1 },
           finishReason: "tool_calls",
         };
       }
@@ -38,7 +38,7 @@ mock.module("../llm/create-client.ts", () => ({
         toolCalls: [
           { id: "c1", name: "mark_task_complete", arguments: { summary: "Task done" } },
         ],
-        usage: { promptTokens: 30, completionTokens: 20, totalTokens: 50 },
+        usage: { promptTokens: 30, completionTokens: 20, totalTokens: 50, llmCallCount: 1 },
         finishReason: "tool_calls",
       };
     },
@@ -191,9 +191,9 @@ describe("design image stripping", () => {
             contentTypes.push(Array.isArray(userMsg?.content) ? "array" : "string");
           }
           if (seq % 2 === 1) {
-            return { content: null, toolCalls: [{ id: "w1", name: "write_file", arguments: { path: "f.html", content: "<h1>x</h1>" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+            return { content: null, toolCalls: [{ id: "w1", name: "write_file", arguments: { path: "f.html", content: "<h1>x</h1>" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, llmCallCount: 1 }, finishReason: "tool_calls" as const };
           }
-          return { content: null, toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "done" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+          return { content: null, toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "done" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, llmCallCount: 1 }, finishReason: "tool_calls" as const };
         },
       }),
     }));
@@ -225,9 +225,9 @@ describe("design image stripping", () => {
             contentTypes.push(Array.isArray(userMsg?.content) ? "array" : "string");
           }
           if (seq % 2 === 1) {
-            return { content: null, toolCalls: [{ id: "w1", name: "write_file", arguments: { path: "g.html", content: "<h1>y</h1>" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+            return { content: null, toolCalls: [{ id: "w1", name: "write_file", arguments: { path: "g.html", content: "<h1>y</h1>" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, llmCallCount: 1 }, finishReason: "tool_calls" as const };
           }
-          return { content: null, toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "done" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, finishReason: "tool_calls" as const };
+          return { content: null, toolCalls: [{ id: "c1", name: "mark_task_complete", arguments: { summary: "done" } }], usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, llmCallCount: 1 }, finishReason: "tool_calls" as const };
         },
       }),
     }));
@@ -262,7 +262,7 @@ describe("task retry on permanent failure", () => {
             toolCalls: [
               { id: "w1", name: "write_file", arguments: { path: "dummy.html", content: "<p>x</p>" } },
             ],
-            usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+            usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, llmCallCount: 1 },
             finishReason: "tool_calls" as const,
           };
         },

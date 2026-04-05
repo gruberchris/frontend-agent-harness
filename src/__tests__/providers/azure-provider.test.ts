@@ -122,6 +122,7 @@ describe("AzureProvider", () => {
     expect(response.usage.promptTokens).toBe(20);
     expect(response.usage.completionTokens).toBe(8);
     expect(response.usage.totalTokens).toBe(28);
+    expect(response.usage.llmCallCount).toBe(1);
     expect(response.finishReason).toBe("stop");
   });
 

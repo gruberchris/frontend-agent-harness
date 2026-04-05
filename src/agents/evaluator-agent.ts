@@ -129,6 +129,10 @@ Use the available Playwright tools to navigate to the application, explore its f
   // When a loop is detected, strip Playwright tools so the model MUST decide.
   let onlyDecisionTools = false;
 
+  // Blank page detection: set when any tool call returns an invalid [object Object] ref.
+  // Persists across outer loop iterations so we only act on it once.
+  let invalidRefDetected = false;
+
   // Tool-calling loop
   for (let i = 0; i < maxToolCallIterations; i++) {
     const iterationsLeft = maxToolCallIterations - i - 1;
@@ -217,6 +221,7 @@ Use the available Playwright tools to navigate to the application, explore its f
             content: `Error: ${reason}. Stop repeating this call. If the page is blank or broken, call decide_needs_work immediately.`,
             toolCallId: toolCall.id,
           });
+          if (isInvalidRef) invalidRefDetected = true;
           loopDetectedThisTurn = true;
           continue;
         }
@@ -287,9 +292,56 @@ Use the available Playwright tools to navigate to the application, explore its f
       });
     }
 
-    // 4. If a loop was detected this turn, strip Playwright tools and demand a decision.
-    // Setting onlyDecisionTools=true means the next client.chat() call only receives
-    // the two decision tools, so the model cannot call Playwright again.
+    // 4. If the page appeared blank (all snapshot refs were invalid), do one focused
+    // LLM call with rich context so it can write the best possible NEEDS_WORK decision.
+    if (invalidRefDetected && !decided) {
+      console.log(`    ⚠️  Blank page detected — Playwright snapshot returned no valid DOM elements. Requesting NEEDS_WORK decision from LLM...`);
+      onlyDecisionTools = true;
+      messages.push({
+        role: "user",
+        content:
+          `The application at ${appUrl} appears to have rendered a blank page. ` +
+          `All Playwright element refs returned "[object Object]" (invalid), which means the page snapshot found no DOM elements at all.\n\n` +
+          `Likely causes:\n` +
+          `- The JavaScript framework (e.g. React) failed to mount to the DOM\n` +
+          `- A JavaScript error or unhandled exception prevented rendering\n` +
+          `- The HTML root element is missing or has the wrong id\n` +
+          `- The build output is empty, malformed, or not being served correctly\n` +
+          `- A missing dependency, failed import, or syntax error crashed the app\n\n` +
+          `You no longer have access to Playwright tools. Based on the design document and these observations, ` +
+          `call decide_needs_work with:\n` +
+          `- explanation: describe what you observed (blank/unrendered page, no DOM elements)\n` +
+          `- corrections: specific, actionable fixes the implementation agent must make`,
+      });
+
+      const blankPageResponse = await client.chat(messages, DECISION_TOOLS);
+      usage = addTokenUsage(usage, blankPageResponse.usage);
+      messages.push({
+        role: "assistant",
+        content: blankPageResponse.content,
+        toolCalls: blankPageResponse.toolCalls.length > 0 ? blankPageResponse.toolCalls : undefined,
+      });
+
+      for (const tc of blankPageResponse.toolCalls) {
+        if (tc.name === "decide_pass") {
+          decision = "PASS";
+          explanation = String(tc.arguments["explanation"] ?? "");
+          decided = true;
+          messages.push({ role: "tool", content: "Decision recorded: PASS", toolCallId: tc.id });
+        } else if (tc.name === "decide_needs_work") {
+          decision = "NEEDS_WORK";
+          explanation = String(tc.arguments["explanation"] ?? "");
+          corrections = String(tc.arguments["corrections"] ?? "");
+          decided = true;
+          messages.push({ role: "tool", content: "Decision recorded: NEEDS_WORK", toolCallId: tc.id });
+        }
+      }
+
+      break; // exit outer loop regardless — blank page is unambiguous
+    }
+
+    // 5. If a generic loop was detected this turn (not blank-page), strip Playwright tools
+    // and demand a decision on the next iteration.
     if (loopDetectedThisTurn && !decided) {
       onlyDecisionTools = true;
       messages.push({

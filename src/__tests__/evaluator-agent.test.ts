@@ -181,6 +181,81 @@ describe("runEvaluatorAgent - outputDir wiring", () => {
   });
 });
 
+describe("runEvaluatorAgent - blank page detection", () => {
+  test("forces NEEDS_WORK via LLM when all snapshot refs are [object Object]", async () => {
+    let callCount = 0;
+
+    mock.module("../llm/create-client.ts", () => ({
+      createLLMClient: () => ({
+        async chat() {
+          callCount++;
+          if (callCount === 1) {
+            // First call: model returns a Playwright tool call with an invalid ref
+            return {
+              content: null,
+              toolCalls: [
+                {
+                  id: "call_snap",
+                  name: "browser_snapshot",
+                  arguments: { ref: "[object Object]" },
+                },
+              ],
+              usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120, llmCallCount: 1 },
+              finishReason: "tool_calls",
+            };
+          }
+          // Second call (inline blank-page LLM call): model decides NEEDS_WORK
+          return {
+            content: null,
+            toolCalls: [
+              {
+                id: "call_nw",
+                name: "decide_needs_work",
+                arguments: {
+                  explanation: "The page at http://localhost:3000 rendered completely blank — no DOM elements were found",
+                  corrections: "Ensure React mounts to #root and the build output is valid",
+                },
+              },
+            ],
+            usage: { promptTokens: 200, completionTokens: 50, totalTokens: 250, llmCallCount: 1 },
+            finishReason: "tool_calls",
+          };
+        },
+      }),
+    }));
+
+    const { runEvaluatorAgent } = await import("../agents/evaluator-agent.ts");
+    const tmpDesignFile = `/tmp/eval-design-blank-${Date.now()}.md`;
+    const tmpPlanFile = `/tmp/eval-plan-blank-${Date.now()}.md`;
+    const tmpMemoryFile = `/tmp/eval-memory-blank-${Date.now()}.md`;
+    trackedFiles.push(tmpDesignFile, tmpPlanFile, tmpMemoryFile);
+    await Bun.write(tmpDesignFile, "# App Design\n\nA simple todo app.");
+
+    const result = await runEvaluatorAgent(
+      "gpt-4o",
+      { type: "copilot" },
+      "http://localhost:3000",
+      "# App Design\n\nA simple todo app.",
+      tmpPlanFile,
+      tmpDesignFile,
+      tmpMemoryFile,
+      "/tmp/eval-blank-output",
+      "chrome",
+      true,
+      "You are an expert UX evaluator.",
+    );
+
+    expect(result.decision).toBe("NEEDS_WORK");
+    expect(result.explanation).toBeTruthy();
+    expect(result.explanation).toContain("blank");
+
+    // Memory file should contain the corrections
+    const memory = await Bun.file(tmpMemoryFile).text();
+    expect(memory).toContain("Evaluator Findings");
+    expect(memory).toContain("React mounts");
+  });
+});
+
 describe("runEvaluatorAgent - devServerError", () => {
   test("skips Playwright and returns NEEDS_WORK with corrections when dev server is down", async () => {
     mockDecision = "needs_work";
